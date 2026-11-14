@@ -279,7 +279,7 @@ fn worker() -> Result<()> {
                 let now = session::is_running();
                 if now != last {
                     last = now;
-                    if t.update(|t| t.session = now).is_none() {
+                    if t.update(move |t| t.session = now).is_none() {
                         return;
                     }
                 }

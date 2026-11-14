@@ -55,6 +55,36 @@ HELP TOPICS
     vtt help costs        what you pay and how to check it
     vtt help files        where settings, keys and logs are
     vtt help trouble      something doesn't work
+    vtt help windows      Windows: installer, start menu, differences
+";
+
+const WINDOWS: &str = "\
+WORTFLUSS ON WINDOWS
+
+Install: run Wortfluss-Setup.exe (no administrator rights needed; installs for your user
+in %LOCALAPPDATA%\\Programs\\Wortfluss). It offers to start at login and to add the `vtt`
+command, then opens the setup: service, API key, dictation key, microphone.
+
+Start menu:  Wortfluss            starts it (icon in the notification area, bottom right;
+                                  click ^ if it's hidden, drag it out to keep it visible)
+             Wortfluss settings   the same as `vtt setup`
+Everything else works as on Linux: the tray menu, Ctrl+Alt shortcuts, `vtt set ...`,
+sessions, notes, speaker separation.
+
+Differences to Linux:
+- No permission setup: the keyboard hook and typing work for every user.
+- Typing sends each character as itself, so every keyboard layout and every script
+  (ü, ş, ß, اردو, emoji) works; `vtt set layout` has nothing to do.
+- Apps running as administrator can't receive typed text from a normal program
+  (Windows security). Run Wortfluss as administrator too only if you really need that.
+- \"What the computer plays\" is recorded from the current default output (WASAPI
+  loopback). Long silences aren't recorded at all, so times in the transcript can run a
+  little ahead after a pause.
+- Settings: %APPDATA%\\Wortfluss (config.toml, secrets.env); the master key for the API
+  keys is in the Windows Credential Manager. Logs, usage, failed pieces:
+  %LOCALAPPDATA%\\Wortfluss.
+- The installer isn't code-signed yet, so Windows SmartScreen may warn on first run
+  (More info > Run anyway).
 ";
 
 const CORRECTION: &str = "\
@@ -364,7 +394,8 @@ pub fn show(topic: Option<&str>) -> Result<()> {
             "costs" | "cost" | "price" | "prices" | "billing" | "usage" => COSTS.into(),
             "files" | "file" | "config" => files(),
             "trouble" | "troubleshooting" | "problems" | "faq" => TROUBLE.into(),
-            other => bail!("no help topic `{other}`. Topics: models, correction, phrases, switching, hotkey, mic, session, layout, security, costs, files, trouble"),
+            "windows" | "win" | "installer" | "install" => WINDOWS.into(),
+            other => bail!("no help topic `{other}`. Topics: models, correction, phrases, switching, hotkey, mic, session, layout, security, costs, files, trouble, windows"),
         },
     };
     print!("{text}");
