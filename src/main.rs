@@ -5,8 +5,10 @@ mod help;
 mod hotkey;
 mod layout;
 mod mics;
+mod notes;
 mod platform;
 mod providers;
+mod session;
 mod secrets;
 mod setup;
 mod stt;
@@ -49,6 +51,8 @@ fn run() -> Result<()> {
         }
         Some("usage") => usage::report(),
         Some("retry") => retry(),
+        Some("session" | "sessions") => session::cmd(&args[1..]),
+        Some("notes") => notes::cmd(&args[1..]),
         Some("mics" | "microphones") => {
             for m in mics::list()? {
                 println!("{}{}{}\n    {}", m.description, if m.is_default { "  [system default]" } else { "" }, if m.muted { "  [muted]" } else { "" }, m.name);
@@ -162,7 +166,8 @@ fn daemon() -> Result<()> {
     }
 
     let (tx, rx) = mpsc::channel();
-    let keyboards = hotkey::listen(hotkey, tx.clone())?;
+    let session_key = hotkey::parse(&cfg.session_hotkey).filter(|k| *k != hotkey);
+    let keyboards = hotkey::listen(hotkey, session_key, tx.clone())?;
     let reload_pending = Arc::new(AtomicBool::new(false));
     watch_config(tx.clone(), reload_pending.clone());
 
@@ -271,6 +276,19 @@ fn daemon() -> Result<()> {
                     duration_text(cfg.max_seconds)
                 ));
                 stop(&mut rec, &current);
+            }
+            (_, SessionKey) => {
+                // Start or stop a session; runs in its own process.
+                thread::spawn(|| {
+                    let result = if session::is_running() {
+                        platform::stop_named("vtt-session", Duration::from_secs(300)).map(|_| ())
+                    } else {
+                        platform::start_background_with(&["session", "run"])
+                    };
+                    if let Err(e) = result {
+                        report(&format!("session: {e:#}"));
+                    }
+                });
             }
             (Mode::Hold, OtherKey) if rec.recorder.is_some() => {
                 if rec.pieces == 0 {
@@ -420,7 +438,7 @@ fn failed_dir() -> Result<std::path::PathBuf> {
     Ok(platform::state_dir()?.join("failed"))
 }
 
-fn save_failed(wav: &[u8], piece: u32) -> Result<std::path::PathBuf> {
+pub(crate) fn save_failed(wav: &[u8], piece: u32) -> Result<std::path::PathBuf> {
     let dir = failed_dir()?;
     std::fs::create_dir_all(&dir)?;
     let now = std::time::SystemTime::now()
@@ -464,7 +482,7 @@ fn retry() -> Result<()> {
 
 /// Phrases Whisper is known to invent from background noise (it was trained on
 /// subtitled videos). Only exact whole-output matches are dropped.
-fn is_hallucination(text: &str) -> bool {
+pub(crate) fn is_hallucination(text: &str) -> bool {
     let t: String = text
         .to_lowercase()
         .chars()

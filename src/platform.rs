@@ -43,11 +43,21 @@ pub fn log_file() -> Result<PathBuf> {
     Ok(state_dir()?.join("vtt.log"))
 }
 
-fn lock_path() -> Result<PathBuf> {
+fn runtime_dir() -> Result<PathBuf> {
     match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(d) if !d.is_empty() => Ok(PathBuf::from(d).join("vtt.lock")),
-        _ => Ok(state_dir()?.join("vtt.lock")),
+        Some(d) if !d.is_empty() => Ok(PathBuf::from(d)),
+        _ => state_dir(),
     }
+}
+
+/// Lock file of the dictation process ("vtt") or a session ("vtt-session").
+fn lock_path_for(name: &str) -> Result<PathBuf> {
+    Ok(runtime_dir()?.join(format!("{name}.lock")))
+}
+
+/// A small file next to the lock files (e.g. the path of the running session's transcript).
+pub fn runtime_file(name: &str) -> Result<PathBuf> {
+    Ok(runtime_dir()?.join(name))
 }
 
 /// Write a file only the current user can read (it may hold API keys). Written to a
@@ -87,7 +97,12 @@ pub struct InstanceLock(#[allow(dead_code)] File);
 
 /// Some(lock) if no other vtt is running, None if one is.
 pub fn lock_instance() -> Result<Option<InstanceLock>> {
-    let path = lock_path()?;
+    lock_named("vtt")
+}
+
+/// Like `lock_instance`, for another kind of process (e.g. "vtt-session").
+pub fn lock_named(name: &str) -> Result<Option<InstanceLock>> {
+    let path = lock_path_for(name)?;
     std::fs::create_dir_all(path.parent().unwrap())?;
     let mut f = OpenOptions::new()
         .read(true)
@@ -108,7 +123,11 @@ pub fn lock_instance() -> Result<Option<InstanceLock>> {
 
 /// Process id of the running vtt, if any.
 pub fn running_pid() -> Option<u32> {
-    let mut f = File::open(lock_path().ok()?).ok()?;
+    running_pid_named("vtt")
+}
+
+pub fn running_pid_named(name: &str) -> Option<u32> {
+    let mut f = File::open(lock_path_for(name).ok()?).ok()?;
     match f.try_lock_shared() {
         Ok(()) => None, // nobody holds it
         Err(_) => {
@@ -121,23 +140,81 @@ pub fn running_pid() -> Option<u32> {
 
 /// Stop the running vtt. Returns false if none was running.
 pub fn stop_running() -> Result<bool> {
-    let Some(pid) = running_pid() else {
+    stop_named("vtt", Duration::from_secs(5))
+}
+
+/// Ask the process holding lock `name` to stop (SIGTERM) and wait up to `wait` for it.
+pub fn stop_named(name: &str, wait: Duration) -> Result<bool> {
+    let Some(pid) = running_pid_named(name) else {
         return Ok(false);
     };
     if unsafe { libc::kill(pid as i32, libc::SIGTERM) } != 0 {
-        return Err(std::io::Error::last_os_error()).context("could not stop vtt");
+        return Err(std::io::Error::last_os_error()).context("could not stop it");
     }
-    for _ in 0..50 {
-        if running_pid().is_none() {
+    let until = std::time::Instant::now() + wait;
+    while std::time::Instant::now() < until {
+        if running_pid_named(name).is_none() {
             return Ok(true);
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(200));
     }
-    Err(anyhow!("vtt (pid {pid}) did not stop"))
+    Err(anyhow!("process {pid} did not stop within {} s", wait.as_secs()))
+}
+
+static STOP_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn on_stop_signal(_: libc::c_int) {
+    STOP_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// From now on Ctrl+C and SIGTERM (`vtt session stop`) only set a flag, so the process
+/// can finish its work (last piece, notes) before exiting.
+pub fn catch_stop_signals() {
+    unsafe {
+        libc::signal(libc::SIGINT, on_stop_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_stop_signal as *const () as libc::sighandler_t);
+    }
+}
+
+pub fn stop_requested() -> bool {
+    STOP_REQUESTED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Local date and time: (year, month, day, hour, minute, second).
+pub fn local_time() -> (i32, u32, u32, u32, u32, u32) {
+    unsafe {
+        let now = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&now, &mut tm);
+        (
+            tm.tm_year + 1900,
+            tm.tm_mon as u32 + 1,
+            tm.tm_mday as u32,
+            tm.tm_hour as u32,
+            tm.tm_min as u32,
+            tm.tm_sec as u32,
+        )
+    }
+}
+
+/// ~/Documents (XDG user dir), for session transcripts.
+pub fn documents_dir() -> Result<PathBuf> {
+    let home = home()?;
+    let dirs = std::fs::read_to_string(xdg("XDG_CONFIG_HOME", ".config")?.join("user-dirs.dirs")).unwrap_or_default();
+    let configured = dirs.lines().find_map(|l| {
+        let v = l.trim().strip_prefix("XDG_DOCUMENTS_DIR=")?.trim_matches('"');
+        Some(PathBuf::from(v.replace("$HOME", &home.to_string_lossy())))
+    });
+    Ok(configured.unwrap_or_else(|| home.join("Documents")))
 }
 
 /// Start `vtt run` detached from this terminal, output going to the log file.
 pub fn start_background() -> Result<()> {
+    start_background_with(&["run"])
+}
+
+/// Start `vtt <args>` detached from this terminal, output going to the log file.
+pub fn start_background_with(args: &[&str]) -> Result<()> {
     use std::os::unix::process::CommandExt;
     let log_path = log_file()?;
     std::fs::create_dir_all(log_path.parent().unwrap())?;
@@ -150,7 +227,7 @@ pub fn start_background() -> Result<()> {
         .truncate(big)
         .open(&log_path)?;
     let mut cmd = Command::new(exe_path()?);
-    cmd.arg("run")
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);

@@ -26,14 +26,32 @@ pub fn correct(a: &Active, model: &str, text: &str, phrases: &[String]) -> Resul
             phrases.join(", ")
         ));
     }
+    let (out, cost) = chat(a, model, &instructions, text, 64 + text.len(), Duration::from_secs(10))
+        .map_err(|e| anyhow::anyhow!("correction failed: {e:#}"))?;
+    Ok(Corrected {
+        text: clean(text, &out).unwrap_or_else(|| text.to_string()),
+        cost,
+    })
+}
+
+/// One request to the service's text model (`/chat/completions`). Returns the answer and,
+/// if the service reports it, the cost in USD. Used for correction and session notes.
+pub fn chat(
+    a: &Active,
+    model: &str,
+    system: &str,
+    user: &str,
+    max_tokens: usize,
+    timeout: Duration,
+) -> Result<(String, Option<f64>)> {
     let url = format!("{}/chat/completions", a.api_url.trim_end_matches('/'));
     let mut body = serde_json::json!({
         "model": model,
         "temperature": 0,
-        "max_tokens": 64 + text.len(),
+        "max_tokens": max_tokens,
         "messages": [
-            {"role": "system", "content": instructions},
-            {"role": "user", "content": text},
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ],
     });
     let extra = providers::chat_models(a.provider.id)
@@ -44,23 +62,27 @@ pub fn correct(a: &Active, model: &str, text: &str, phrases: &[String]) -> Resul
     if let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(extra) {
         body.as_object_mut().unwrap().extend(fields);
     }
-
-    let mut req = ureq::post(&url).timeout(Duration::from_secs(10));
+    let mut req = ureq::post(&url).timeout(timeout);
     if !a.api_key.is_empty() {
         req = req.set("Authorization", &format!("Bearer {}", a.api_key));
     }
     let json: serde_json::Value = match req.send_json(body) {
         Ok(resp) => resp.into_json()?,
         Err(ureq::Error::Status(code, resp)) => {
-            bail!("correction failed, HTTP {code}: {}", resp.into_string().unwrap_or_default())
+            bail!("HTTP {code}: {}", resp.into_string().unwrap_or_default())
         }
-        Err(e) => bail!("correction failed: {e}"),
+        Err(e) => bail!("{e}"),
     };
-    let out = json["choices"][0]["message"]["content"].as_str().unwrap_or("");
-    Ok(Corrected {
-        text: clean(text, out).unwrap_or_else(|| text.to_string()),
-        cost: json["usage"]["cost"].as_f64(),
-    })
+    let mut out = json["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    // Some models "think" out loud first.
+    if let Some(end) = out.rfind("</think>") {
+        out = out[end + "</think>".len()..].trim().to_string();
+    }
+    Ok((out, json["usage"]["cost"].as_f64()))
 }
 
 /// The model's answer, or None if it doesn't look like a correction of the input

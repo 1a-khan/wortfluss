@@ -15,7 +15,8 @@ GETTING STARTED
 COMMANDS
     vtt setup        menu of all settings with current values; change one at a time
     vtt set <what>   change one thing directly: service, model, key, correction, phrases,
-                     language, mic, hotkey, mode, sounds, layout, autostart, advanced
+                     language, mic, hotkey, mode, sounds, layout, autostart, session,
+                     advanced
     vtt phrases      list names/words to spell right; vtt phrases add \"A, B\" / remove \"A\"
     vtt check        test everything vtt needs and show how to fix problems
     vtt start        start in the background        vtt stop    stop it
@@ -23,6 +24,9 @@ COMMANDS
     vtt usage        audio sent today / this month / all time, with cost
     vtt retry        transcribe pieces that failed earlier (e.g. no internet)
     vtt mics         list the microphones; choose one with `vtt set mic`
+    vtt session start [title] [--source system|mic|both]   transcribe a lecture/meeting
+    vtt session stop  stop it and write notes        vtt session status
+    vtt notes FILE [lecture|meeting|summary]          (re)write notes for a transcript
     vtt autostart on|off      start at login or not
     vtt test-type    type a test sentence after 3 seconds
     vtt test-mic     record 4 seconds to vtt-test.wav
@@ -36,6 +40,7 @@ HELP TOPICS
     vtt help switching    changing service or model
     vtt help hotkey       choosing the dictation key, hold vs toggle
     vtt help mic          choosing the microphone
+    vtt help session      transcribing lectures, videos and meetings + notes
     vtt help layout       keyboard layouts and special characters
     vtt help security     how API keys are stored and protected
     vtt help costs        what you pay and how to check it
@@ -174,6 +179,37 @@ Silent recordings: check the microphone isn't muted (`vtt mics` shows [muted]) a
 try `vtt test-mic`.
 ";
 
+const SESSION: &str = "\
+SESSION MODE: LECTURES, VIDEOS, MEETINGS
+
+Instead of typing, vtt writes everything that is said into a Markdown file, live, and
+adds notes at the end.
+
+    vtt session start \"Physics 3\"              what the computer plays (default)
+    vtt session start --source mic              a lecture in the room
+    vtt session start \"Team call\" --source both  calls: lines labelled You / Others
+    vtt session stop                            stop, then the notes are written
+    vtt session status                          is one running? which file?
+    vtt notes FILE meeting                      write other notes for a transcript
+
+Options: --notes lecture|meeting|summary|none, --dir FOLDER. Defaults, a session key
+(press to start, press again to stop) and the folder: `vtt set session`.
+
+Files: ~/Documents/vtt/2026-11-14 10-00 Title.md. Notes at the top, transcript with
+[hh:mm:ss] times below. Only text is kept, never audio. Pauses and silence are skipped;
+a session stops by itself after 30 minutes without speech.
+
+Notes use the text model of `vtt set correction` (correction itself can stay off).
+Cost for 1 hour: ~$0.01 transcript (OpenRouter Whisper Turbo) + ~$0.002 notes.
+
+\"both\" with loudspeakers: the microphone also hears the other side, so text can
+appear twice. Use headphones.
+
+CONSENT: only record other people (meetings, calls, lectures) with their permission.
+In Germany recording non-public speech without consent is a criminal offence
+(§ 201 StGB), and many universities don't allow recording lectures without asking.
+";
+
 const COSTS: &str = "\
 COSTS
 
@@ -294,13 +330,14 @@ pub fn show(topic: Option<&str>) -> Result<()> {
             "hotkey" | "key" | "keys" | "mode" => HOTKEY.into(),
             "layout" | "keyboard" => LAYOUT.into(),
             "mic" | "mics" | "microphone" | "input" => MIC.into(),
+            "session" | "sessions" | "lecture" | "meeting" | "notes" => SESSION.into(),
             "security" | "secrets" | "api-key" | "apikey" | "encryption" => SECURITY.into(),
             "phrases" | "phrase" | "words" | "names" => PHRASES.into(),
             "switching" | "switch" | "change" | "set" => SWITCHING.into(),
             "costs" | "cost" | "price" | "prices" | "billing" | "usage" => COSTS.into(),
             "files" | "file" | "config" => files(),
             "trouble" | "troubleshooting" | "problems" | "faq" => TROUBLE.into(),
-            other => bail!("no help topic `{other}`. Topics: models, correction, phrases, switching, hotkey, mic, layout, security, costs, files, trouble"),
+            other => bail!("no help topic `{other}`. Topics: models, correction, phrases, switching, hotkey, mic, session, layout, security, costs, files, trouble"),
         },
     };
     print!("{text}");

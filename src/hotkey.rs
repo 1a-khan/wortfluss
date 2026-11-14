@@ -23,6 +23,8 @@ pub enum Event {
     Tick(u64),
     /// config.toml changed.
     Reload,
+    /// The session key was pressed (start/stop a session).
+    SessionKey,
 }
 
 const PERMISSION_HELP: &str = "no keyboard could be opened. Your user needs read access to \
@@ -45,7 +47,7 @@ pub fn keyboard_count() -> usize {
     keyboards().len()
 }
 
-pub fn listen(hotkey: Key, tx: Sender<Event>) -> Result<usize> {
+pub fn listen(hotkey: Key, session_key: Option<Key>, tx: Sender<Event>) -> Result<usize> {
     let mut count = 0;
     for mut dev in keyboards() {
         if !dev.supported_keys().is_some_and(|k| k.contains(hotkey)) {
@@ -62,7 +64,12 @@ pub fn listen(hotkey: Key, tx: Sender<Event>) -> Result<usize> {
             };
             for ev in events {
                 let InputEventKind::Key(k) = ev.kind() else { continue };
-                let event = if k == hotkey {
+                let event = if Some(k) == session_key {
+                    if ev.value() != 1 {
+                        continue;
+                    }
+                    Event::SessionKey
+                } else if k == hotkey {
                     match ev.value() {
                         1 => Event::Down,
                         0 => Event::Up,

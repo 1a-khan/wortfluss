@@ -43,6 +43,13 @@ pub struct Config {
     pub sounds: bool,
     pub keyboard_layout: String,
     pub keyboard_variant: String,
+    /// Session mode: default source ("system", "mic", "both"), notes ("auto", "lecture",
+    /// "meeting", "summary", "none"), transcript folder ("" = ~/Documents/vtt) and an
+    /// optional hotkey that starts/stops a session.
+    pub session_source: String,
+    pub session_notes: String,
+    pub session_dir: String,
+    pub session_hotkey: String,
     pub max_seconds: u64,
     /// Long recordings are sent in pieces of about this many seconds, cut at a pause.
     pub piece_seconds: u64,
@@ -78,6 +85,10 @@ impl Default for Config {
             sounds: true,
             keyboard_layout: "auto".into(),
             keyboard_variant: String::new(),
+            session_source: "system".into(),
+            session_notes: "auto".into(),
+            session_dir: String::new(),
+            session_hotkey: String::new(),
             max_seconds: 120,
             piece_seconds: 30,
             add_trailing_space: true,
@@ -343,6 +354,18 @@ sounds = {sounds}
 keyboard_layout = {layout}
 keyboard_variant = {variant}
 
+# SESSION MODE (`vtt session start`, or the session key): transcribe what the computer
+# plays and/or the microphone into a Markdown file, then write notes.
+# session_source: "system" (lectures, videos), "mic" (a room), "both" (calls: You/Others)
+# session_notes: "auto" (meeting minutes for "both", else lecture notes), "lecture",
+#   "meeting", "summary" or "none"
+# session_dir: where transcripts go ("" = ~/Documents/vtt)
+# session_hotkey: a key that starts/stops a session (e.g. "KEY_F10"), "" = none
+session_source = {s_source}
+session_notes = {s_notes}
+session_dir = {s_dir}
+session_hotkey = {s_key}
+
 # Stop recording automatically after this many seconds (stuck key, forgotten toggle).
 # Toggle mode also stops by itself after 60 s without speech.
 max_seconds = {max_seconds}
@@ -367,6 +390,10 @@ key_delay_ms = {delay}
         layout = q(&c.keyboard_layout),
         variant = q(&c.keyboard_variant),
         max_seconds = c.max_seconds,
+        s_source = q(&c.session_source),
+        s_notes = q(&c.session_notes),
+        s_dir = q(&c.session_dir),
+        s_key = q(&c.session_hotkey),
         piece = c.piece_seconds,
         space = c.add_trailing_space,
         delay = c.key_delay_ms,

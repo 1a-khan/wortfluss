@@ -14,6 +14,7 @@ use pulseaudio::protocol;
 use std::ffi::CString;
 use std::io::BufReader;
 use std::os::unix::net::UnixStream;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(Clone, Debug)]
@@ -26,14 +27,18 @@ pub struct Mic {
     pub muted: bool,
 }
 
-/// All inputs except "Monitor of ..." (recordings of what the speakers play).
-pub fn list() -> Result<Vec<Mic>> {
+type Sock = BufReader<UnixStream>;
+
+fn perr(e: protocol::ProtocolError) -> anyhow::Error {
+    anyhow!("sound server: {e}")
+}
+
+/// Connect and log in to the sound server. Returns the socket and protocol version.
+fn connect() -> Result<(Sock, u16)> {
     let path = pulseaudio::socket_path_from_env().context("no sound server found (PipeWire/PulseAudio)")?;
     let stream = UnixStream::connect(&path).with_context(|| format!("cannot reach the sound server at {}", path.display()))?;
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;
     let mut sock = BufReader::new(stream);
-    let err = |e: protocol::ProtocolError| anyhow!("sound server: {e}");
-
     let cookie = pulseaudio::cookie_path_from_env()
         .and_then(|p| std::fs::read(p).ok())
         .unwrap_or_default();
@@ -44,15 +49,21 @@ pub fn list() -> Result<Vec<Mic>> {
         cookie,
     };
     protocol::write_command_message(sock.get_mut(), 0, &protocol::Command::Auth(auth), protocol::MAX_VERSION)
-        .map_err(err)?;
-    let (_, reply) = protocol::read_reply_message::<protocol::AuthReply>(&mut sock, protocol::MAX_VERSION).map_err(err)?;
+        .map_err(perr)?;
+    let (_, reply) = protocol::read_reply_message::<protocol::AuthReply>(&mut sock, protocol::MAX_VERSION).map_err(perr)?;
     let version = protocol::MAX_VERSION.min(reply.version);
 
     let mut props = protocol::Props::new();
     props.set(protocol::Prop::ApplicationName, CString::new("vtt").unwrap());
-    protocol::write_command_message(sock.get_mut(), 1, &protocol::Command::SetClientName(props), version).map_err(err)?;
-    protocol::read_reply_message::<protocol::SetClientNameReply>(&mut sock, version).map_err(err)?;
+    protocol::write_command_message(sock.get_mut(), 1, &protocol::Command::SetClientName(props), version).map_err(perr)?;
+    protocol::read_reply_message::<protocol::SetClientNameReply>(&mut sock, version).map_err(perr)?;
+    Ok((sock, version))
+}
 
+/// All inputs except "Monitor of ..." (recordings of what the speakers play).
+pub fn list() -> Result<Vec<Mic>> {
+    let (mut sock, version) = connect()?;
+    let err = perr;
     protocol::write_command_message(sock.get_mut(), 2, &protocol::Command::GetServerInfo, version).map_err(err)?;
     let (_, server) = protocol::read_reply_message::<protocol::ServerInfo>(&mut sock, version).map_err(err)?;
     let default = server
@@ -155,5 +166,90 @@ pub fn describe(name: &str) -> String {
             None => format!("{name} (not connected: the default mic is used)"),
         },
         Err(_) => name.to_string(),
+    }
+}
+
+// ---- recording a named source (session mode) ----
+
+/// Speaker output ("what you hear"): the monitor of the current default output, so it
+/// follows a switch to headphones.
+pub const SYSTEM_AUDIO: &str = "@DEFAULT_MONITOR@";
+/// The default microphone.
+pub const DEFAULT_MIC: &str = "@DEFAULT_SOURCE@";
+
+/// Records one sound-server source as 16 kHz mono (the server converts), so several
+/// sources can be recorded at once, each with its own label. Used by session mode.
+pub struct SourceRecorder {
+    samples: Arc<Mutex<Vec<f32>>>,
+    socket: UnixStream,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SourceRecorder {
+    pub fn start(source: &str) -> Result<Self> {
+        let (mut sock, version) = connect()?;
+        let params = protocol::RecordStreamParams {
+            sample_spec: protocol::SampleSpec {
+                format: protocol::SampleFormat::S16Le,
+                channels: 1,
+                sample_rate: crate::audio::TARGET_RATE,
+            },
+            channel_map: protocol::ChannelMap::mono(),
+            source_name: Some(CString::new(source)?),
+            cvolume: Some(protocol::ChannelVolume::norm(1)),
+            ..Default::default()
+        };
+        protocol::write_command_message(sock.get_mut(), 2, &protocol::Command::CreateRecordStream(params), version)
+            .map_err(perr)?;
+        let (_, reply) = protocol::read_reply_message::<protocol::CreateRecordStreamReply>(&mut sock, version)
+            .map_err(perr)
+            .with_context(|| format!("cannot record from `{source}`"))?;
+        if reply.sample_spec.format != protocol::SampleFormat::S16Le || reply.sample_spec.channels != 1 {
+            anyhow::bail!("sound server offered an unexpected format: {:?}", reply.sample_spec);
+        }
+        // No timeout while streaming: a silent, suspended output may send nothing for a while.
+        sock.get_ref().set_read_timeout(None)?;
+        let socket = sock.get_ref().try_clone()?;
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let buf = samples.clone();
+        let thread = std::thread::spawn(move || {
+            use std::io::Read;
+            let mut data = Vec::new();
+            loop {
+                let Ok(desc) = protocol::read_descriptor(&mut sock) else { return };
+                if desc.channel == u32::MAX {
+                    // a message from the server (e.g. stream moved): read and ignore
+                    if protocol::Command::read_tag_prefixed(&mut sock, version).is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                data.resize(desc.length as usize, 0);
+                if sock.read_exact(&mut data).is_err() {
+                    return;
+                }
+                let mut b = buf.lock().unwrap();
+                b.extend(
+                    data.chunks_exact(2)
+                        .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0),
+                );
+            }
+        });
+        Ok(Self { samples, socket, thread: Some(thread) })
+    }
+
+    /// See `audio::Recorder::take_piece`.
+    pub fn take_piece(&self, min: f32, max: f32) -> Option<crate::audio::Clip> {
+        crate::audio::cut_piece(&mut self.samples.lock().unwrap(), min, max)
+    }
+
+    pub fn stop(mut self) -> crate::audio::Clip {
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        crate::audio::Clip {
+            samples: std::mem::take(&mut *self.samples.lock().unwrap()),
+        }
     }
 }

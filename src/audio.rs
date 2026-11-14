@@ -95,11 +95,7 @@ impl Recorder {
     /// after `min`; if there is no real pause by `max` seconds, cut at the quietest
     /// moment anyway. None = not yet.
     pub fn take_piece(&self, min: f32, max: f32) -> Option<Clip> {
-        let mut buf = self.samples.lock().unwrap();
-        let cut = find_cut(&buf, min, max)?;
-        Some(Clip {
-            samples: buf.drain(..cut).collect(),
-        })
+        cut_piece(&mut self.samples.lock().unwrap(), min, max)
     }
 
     pub fn stop(self) -> Clip {
@@ -108,6 +104,14 @@ impl Recorder {
             samples: std::mem::take(&mut *self.samples.lock().unwrap()),
         }
     }
+}
+
+/// Take a piece off the front of a 16 kHz buffer if one is ready (see `take_piece`).
+pub fn cut_piece(buf: &mut Vec<f32>, min: f32, max: f32) -> Option<Clip> {
+    let cut = find_cut(buf, min, max)?;
+    Some(Clip {
+        samples: buf.drain(..cut).collect(),
+    })
 }
 
 /// Where to cut a piece (sample index), see `take_piece`.

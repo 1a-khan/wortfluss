@@ -23,6 +23,9 @@ within a few seconds.
 | `vtt phrases [add\|remove\|clear]` | names and words to spell right |
 | `vtt mics` / `vtt set mic` | list microphones / choose one (with a 3-second test) |
 | `vtt retry` | transcribe pieces that failed earlier (e.g. no internet) |
+| `vtt session start [title] [--source system\|mic\|both]` | transcribe a lecture, video or meeting into a Markdown file |
+| `vtt session stop` / `status` | stop (notes are written) / show the running session |
+| `vtt notes FILE [lecture\|meeting\|summary]` | (re)write notes for a transcript |
 | `vtt help [topic]` | built-in guide: models, correction, hotkey, layout, security, costs, files, trouble |
 | `vtt check` | tests everything (keyboard access, mic, key, model, autostart) and says what to fix |
 | `vtt start` / `vtt stop` | start in the background / stop |
@@ -57,6 +60,25 @@ until you hit rate limits. `vtt usage` shows your own numbers.
 
 Language: "detect automatically" works well if you switch languages. A fixed language is a bit
 faster and avoids rare mix-ups. **Spelling help** (names, brands) fixes words like "Grog" → "Groq".
+
+## Session mode: lectures, videos, meetings
+
+Instead of typing, vtt writes everything said into `~/Documents/vtt/YYYY-MM-DD HH-MM Title.md`,
+live, with `[hh:mm:ss]` times, and writes notes at the top when the session stops.
+
+| Source | For | Labels |
+|---|---|---|
+| `system` (default) | online lectures, videos, tutorials: what the computer plays | none |
+| `mic` | a lecture or talk in the room | none |
+| `both` | calls and online meetings (use headphones) | **You** (mic) / **Others** (computer) |
+
+- Notes: lecture notes (summary, key points, terms, questions), meeting minutes (decisions,
+  action items), or a summary; written by the text model of `vtt set correction`.
+  `vtt notes FILE TYPE` redoes them without touching the transcript.
+- Text only, no audio kept. Silence is skipped; a session stops after 30 min without speech.
+- Optional session key (press to start, again to stop) and defaults: `vtt set session`.
+- Cost for 1 hour: ~$0.01 transcript (OpenRouter Whisper Turbo) + ~$0.002 notes.
+- **Consent:** only record other people with their permission (in Germany § 201 StGB).
 
 ## Spelling & grammar correction (optional)
 
@@ -162,7 +184,7 @@ The code is split so a Windows build replaces only the OS-specific parts:
 | `hotkey.rs` | evdev (`/dev/input`) | `SetWindowsHookEx(WH_KEYBOARD_LL)`, no permissions needed |
 | `typer.rs` + `layout.rs` | uinput + xkbcommon key mapping | `SendInput` with `KEYEVENTF_UNICODE`: any character, any layout, no mapping needed |
 | `audio.rs` | cpal (ALSA) | cpal (WASAPI), unchanged |
-| `mics.rs` | sound-server source list (PulseAudio protocol), `PIPEWIRE_NODE` | cpal/WASAPI device list with names |
+| `mics.rs` | sound-server source list + per-source recording (PulseAudio protocol) | cpal/WASAPI devices; system audio via WASAPI loopback |
 | `setup.rs`, `config.rs`, `providers.rs`, `stt.rs`, `usage.rs` | shared | shared |
 
 For clients, Windows needs none of the permission steps above. A single `vtt.exe` plus

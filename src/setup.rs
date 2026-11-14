@@ -148,6 +148,7 @@ pub enum Setting {
     Sounds,
     Layout,
     Autostart,
+    Session,
     Advanced,
 }
 
@@ -165,6 +166,7 @@ const SETTINGS: &[(Setting, &str, &[&str], &str)] = &[
     (Setting::Sounds, "sounds", &["beep", "beeps"], "Beeps"),
     (Setting::Layout, "layout", &["keyboard"], "Keyboard layout"),
     (Setting::Autostart, "autostart", &["login", "startup"], "Start at login"),
+    (Setting::Session, "session", &["sessions", "notes", "lecture", "meeting"], "Session mode (lectures, meetings)"),
     (Setting::Advanced, "advanced", &["spacing", "typing-speed", "pieces"], "Advanced (spacing, typing speed, pieces)"),
 ];
 
@@ -210,6 +212,12 @@ fn current_value(cfg: &Config, s: Setting) -> String {
             if cfg.layout_is_auto() { format!("automatic (now {})", layout::detect().0) } else { layout::resolve(cfg).to_string() }
         }
         Setting::Autostart => if platform::autostart_enabled() { "on".into() } else { "off".into() },
+        Setting::Session => format!(
+            "{}, notes {}, key {}",
+            cfg.session_source,
+            cfg.session_notes,
+            if cfg.session_hotkey.is_empty() { "none".to_string() } else { hotkey::pretty(&cfg.session_hotkey) }
+        ),
         Setting::Advanced => format!(
             "space after text {}, {} ms per key, pieces ~{} s",
             if cfg.add_trailing_space { "on" } else { "off" },
@@ -345,6 +353,7 @@ fn change(t: &ColorfulTheme, cfg: &mut Config, s: Setting) -> Result<()> {
             platform::set_autostart(on)?;
         }
         Setting::Advanced => ask_advanced(t, cfg)?,
+        Setting::Session => ask_session(t, cfg)?,
     }
     Ok(())
 }
@@ -627,6 +636,79 @@ fn ask_mode(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
             .validate_with(|v: &u64| if (10..=7200).contains(v) { Ok(()) } else { Err("between 10 and 7200") })
             .interact_text()?
     };
+    Ok(())
+}
+
+/// Defaults for `vtt session start` and the session key.
+fn ask_session(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
+    println!("  Session mode writes a transcript of a lecture, video or meeting to a file and");
+    println!("  notes at the end. Start: `vtt session start [title]` or the session key.");
+    println!("  Only record other people with their consent.");
+    let sources = [
+        ("system", "System audio: what the computer plays (online lectures, videos, tutorials)"),
+        ("mic", "Microphone: a lecture or talk in the room"),
+        ("both", "Both: calls and online meetings, labelled You / Others (use headphones)"),
+    ];
+    let labels: Vec<&str> = sources.iter().map(|s| s.1).collect();
+    let i = Select::with_theme(t)
+        .with_prompt("What should a session record by default?")
+        .items(&labels)
+        .default(sources.iter().position(|s| s.0 == cfg.session_source).unwrap_or(0))
+        .interact()?;
+    cfg.session_source = sources[i].0.to_string();
+
+    let kinds = [
+        ("auto", "Automatic: meeting minutes for calls, lecture notes otherwise (recommended)"),
+        ("lecture", "Lecture notes: summary, key points, terms, open questions"),
+        ("meeting", "Meeting minutes: decisions, action items, open questions"),
+        ("summary", "Short summary"),
+        ("none", "No notes (transcript only)"),
+    ];
+    let labels: Vec<&str> = kinds.iter().map(|k| k.1).collect();
+    let i = Select::with_theme(t)
+        .with_prompt("Which notes at the end?")
+        .items(&labels)
+        .default(kinds.iter().position(|k| k.0 == cfg.session_notes).unwrap_or(0))
+        .interact()?;
+    cfg.session_notes = kinds[i].0.to_string();
+    if cfg.session_notes != "none" && cfg.active().correction_model.is_empty() {
+        println!("  Notes need a text model: choose one with `vtt set correction` (it can stay switched off).");
+    }
+
+    let current = crate::session::session_dir(cfg).map(|d| d.display().to_string()).unwrap_or_default();
+    let dir: String = Input::with_theme(t)
+        .with_prompt("Folder for transcripts")
+        .default(current.clone())
+        .interact_text()?;
+    cfg.session_dir = if dir.trim() == current { cfg.session_dir.clone() } else { dir.trim().to_string() };
+
+    let key_now = if cfg.session_hotkey.is_empty() { "none".to_string() } else { hotkey::pretty(&cfg.session_hotkey) };
+    let choice = Select::with_theme(t)
+        .with_prompt(format!("Session key (press to start, press again to stop). Now: {key_now}"))
+        .items(&["Keep", "Choose a key by pressing it", "No session key (use the command)"])
+        .default(0)
+        .interact()?;
+    match choice {
+        1 => loop {
+            println!("  Press the key you want to use (e.g. F10, Pause, Scroll Lock)...");
+            let key = hotkey::capture()?;
+            let name = format!("{key:?}");
+            if hotkey::parse(&cfg.hotkey) == Some(key) {
+                println!("  That's already the dictation key. Choose another one.");
+                continue;
+            }
+            println!("  You pressed: {}", hotkey::pretty(&name));
+            if let Some(w) = hotkey::warning(key) {
+                println!("  Careful: {w}.");
+            }
+            if Confirm::with_theme(t).with_prompt("Use this key?").default(true).interact()? {
+                cfg.session_hotkey = name;
+                break;
+            }
+        },
+        2 => cfg.session_hotkey.clear(),
+        _ => {}
+    }
     Ok(())
 }
 
