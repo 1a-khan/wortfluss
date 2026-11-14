@@ -14,6 +14,7 @@ evdev = "0.12"                                  # global hotkey + virtual keyboa
 getrandom = "0.4.3"
 gvdb = "0.10.1"
 keyring = "4.2.0"
+ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 libc = "0.2.191"
 notify-rust = "4"                               # desktop notifications for errors (pure Rust D-Bus)
 pulseaudio = "0.3.2"

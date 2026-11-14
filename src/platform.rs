@@ -289,3 +289,51 @@ pub fn set_autostart(on: bool) -> Result<()> {
     )?;
     Ok(())
 }
+
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(program).is_file()))
+        .unwrap_or(false)
+}
+
+/// Run `vtt <args>` in a new terminal window (tray "All settings...", shortcut).
+pub fn open_in_terminal(args: &[&str]) -> Result<()> {
+    let exe = exe_path()?;
+    let exe = exe.to_string_lossy().to_string();
+    // (terminal, arguments that come before the command)
+    let terminals: [(&str, &[&str]); 7] = [
+        ("ptyxis", &["--new-window", "--"]),
+        ("gnome-terminal", &["--"]),
+        ("kgx", &["--"]),
+        ("konsole", &["-e"]),
+        ("xfce4-terminal", &["-x"]),
+        ("xterm", &["-e"]),
+        ("x-terminal-emulator", &["-e"]),
+    ];
+    let (term, pre) = terminals
+        .iter()
+        .find(|(t, _)| on_path(t))
+        .ok_or_else(|| anyhow!("no terminal program found; run `vtt {}` in a terminal", args.join(" ")))?;
+    Command::new(term)
+        .args(*pre)
+        .arg(&exe)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("could not open {term}"))?;
+    Ok(())
+}
+
+/// Open a folder or file with the desktop's default program.
+pub fn open_path(path: &Path) -> Result<()> {
+    Command::new("xdg-open")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("could not open the file manager")?;
+    Ok(())
+}

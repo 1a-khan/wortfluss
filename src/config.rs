@@ -50,6 +50,18 @@ pub struct Config {
     pub session_notes: String,
     pub session_dir: String,
     pub session_hotkey: String,
+    /// Keep a session's audio next to the transcript (asked to delete it afterwards).
+    pub session_keep_audio: bool,
+    /// Kept session audio is deleted automatically after this many days.
+    pub session_audio_days: u64,
+    /// Keyboard shortcuts ("Ctrl+Alt+S"; "" = off).
+    pub shortcut_session: String,
+    pub shortcut_call: String,
+    pub shortcut_correction: String,
+    pub shortcut_mode: String,
+    pub shortcut_settings: String,
+    /// Show the tray icon.
+    pub tray: bool,
     pub max_seconds: u64,
     /// Long recordings are sent in pieces of about this many seconds, cut at a pause.
     pub piece_seconds: u64,
@@ -89,6 +101,14 @@ impl Default for Config {
             session_notes: "auto".into(),
             session_dir: String::new(),
             session_hotkey: String::new(),
+            session_keep_audio: false,
+            session_audio_days: 7,
+            shortcut_session: "Ctrl+Alt+S".into(),
+            shortcut_call: "Ctrl+Alt+M".into(),
+            shortcut_correction: "Ctrl+Alt+K".into(),
+            shortcut_mode: "Ctrl+Alt+H".into(),
+            shortcut_settings: "Ctrl+Alt+V".into(),
+            tray: true,
             max_seconds: 120,
             piece_seconds: 30,
             add_trailing_space: true,
@@ -185,6 +205,21 @@ impl Config {
 
     pub fn set_phrases(&mut self, list: Vec<String>) {
         self.prompt = split_phrases(&list.join(", ")).join(", ");
+    }
+
+    /// The configured keyboard shortcuts that are valid.
+    pub fn shortcuts(&self) -> Vec<(crate::hotkey::Combo, crate::hotkey::Action)> {
+        use crate::hotkey::{Action, Combo};
+        [
+            (&self.shortcut_session, Action::Session),
+            (&self.shortcut_call, Action::CallSession),
+            (&self.shortcut_correction, Action::ToggleCorrection),
+            (&self.shortcut_mode, Action::ToggleMode),
+            (&self.shortcut_settings, Action::OpenSettings),
+        ]
+        .into_iter()
+        .filter_map(|(text, action)| Some((Combo::parse(text)?, action)))
+        .collect()
     }
 
     pub fn layout_is_auto(&self) -> bool {
@@ -366,6 +401,23 @@ session_notes = {s_notes}
 session_dir = {s_dir}
 session_hotkey = {s_key}
 
+# Keep the session audio next to the transcript (in a hidden .audio folder), e.g. to redo
+# a transcript with `vtt session redo FILE`. Off by default: it contains voices. After a
+# session vtt asks whether to delete it; kept audio is deleted after session_audio_days.
+session_keep_audio = {keep}
+session_audio_days = {days}
+
+# KEYBOARD SHORTCUTS ("Ctrl+Alt+S", "Super+F9" ...; "" = off). Easiest: `vtt set shortcuts`.
+# The focused app also sees the keys, so pick combinations your apps don't use.
+shortcut_session = {sc_session}        # start/stop a session (default source)
+shortcut_call = {sc_call}              # start/stop a call session (You / Others)
+shortcut_correction = {sc_corr}        # spelling correction on/off
+shortcut_mode = {sc_mode}              # hold <-> toggle
+shortcut_settings = {sc_set}           # open the settings in a terminal
+
+# Icon in the system tray with a menu (right-click) for the common settings
+tray = {tray}
+
 # Stop recording automatically after this many seconds (stuck key, forgotten toggle).
 # Toggle mode also stops by itself after 60 s without speech.
 max_seconds = {max_seconds}
@@ -394,6 +446,14 @@ key_delay_ms = {delay}
         s_notes = q(&c.session_notes),
         s_dir = q(&c.session_dir),
         s_key = q(&c.session_hotkey),
+        keep = c.session_keep_audio,
+        days = c.session_audio_days,
+        sc_session = q(&c.shortcut_session),
+        sc_call = q(&c.shortcut_call),
+        sc_corr = q(&c.shortcut_correction),
+        sc_mode = q(&c.shortcut_mode),
+        sc_set = q(&c.shortcut_settings),
+        tray = c.tray,
         piece = c.piece_seconds,
         space = c.add_trailing_space,
         delay = c.key_delay_ms,

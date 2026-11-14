@@ -149,6 +149,7 @@ pub enum Setting {
     Layout,
     Autostart,
     Session,
+    Shortcuts,
     Advanced,
 }
 
@@ -167,6 +168,7 @@ const SETTINGS: &[(Setting, &str, &[&str], &str)] = &[
     (Setting::Layout, "layout", &["keyboard"], "Keyboard layout"),
     (Setting::Autostart, "autostart", &["login", "startup"], "Start at login"),
     (Setting::Session, "session", &["sessions", "notes", "lecture", "meeting"], "Session mode (lectures, meetings)"),
+    (Setting::Shortcuts, "shortcuts", &["shortcut", "keys", "combos", "tray"], "Keyboard shortcuts & tray icon"),
     (Setting::Advanced, "advanced", &["spacing", "typing-speed", "pieces"], "Advanced (spacing, typing speed, pieces)"),
 ];
 
@@ -212,6 +214,10 @@ fn current_value(cfg: &Config, s: Setting) -> String {
             if cfg.layout_is_auto() { format!("automatic (now {})", layout::detect().0) } else { layout::resolve(cfg).to_string() }
         }
         Setting::Autostart => if platform::autostart_enabled() { "on".into() } else { "off".into() },
+        Setting::Shortcuts => {
+            let n = cfg.shortcuts().len();
+            format!("{n} shortcut(s), tray {}", if cfg.tray { "on" } else { "off" })
+        }
         Setting::Session => format!(
             "{}, notes {}, key {}",
             cfg.session_source,
@@ -354,6 +360,7 @@ fn change(t: &ColorfulTheme, cfg: &mut Config, s: Setting) -> Result<()> {
         }
         Setting::Advanced => ask_advanced(t, cfg)?,
         Setting::Session => ask_session(t, cfg)?,
+        Setting::Shortcuts => ask_shortcuts(t, cfg)?,
     }
     Ok(())
 }
@@ -682,6 +689,15 @@ fn ask_session(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
         .interact_text()?;
     cfg.session_dir = if dir.trim() == current { cfg.session_dir.clone() } else { dir.trim().to_string() };
 
+    cfg.session_keep_audio = Confirm::with_theme(t)
+        .with_prompt(format!(
+            "Keep the session audio, e.g. to redo a transcript? (asked to delete after each session, \
+             deleted after {} days)",
+            cfg.session_audio_days
+        ))
+        .default(cfg.session_keep_audio)
+        .interact()?;
+
     let key_now = if cfg.session_hotkey.is_empty() { "none".to_string() } else { hotkey::pretty(&cfg.session_hotkey) };
     let choice = Select::with_theme(t)
         .with_prompt(format!("Session key (press to start, press again to stop). Now: {key_now}"))
@@ -710,6 +726,67 @@ fn ask_session(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
         _ => {}
     }
     Ok(())
+}
+
+/// Keyboard shortcuts (pressed, not typed) and the tray icon.
+fn ask_shortcuts(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
+    println!("  Shortcuts work everywhere while vtt runs. The focused app also receives them,");
+    println!("  so use combinations your apps don't need (Ctrl+Alt+letter usually works).");
+    loop {
+        let entries: [(&str, String); 5] = [
+            ("Start/stop a session", cfg.shortcut_session.clone()),
+            ("Start/stop a call session (You / Others)", cfg.shortcut_call.clone()),
+            ("Spelling correction on/off", cfg.shortcut_correction.clone()),
+            ("Hold <-> toggle", cfg.shortcut_mode.clone()),
+            ("Open the settings", cfg.shortcut_settings.clone()),
+        ];
+        let mut labels: Vec<String> = entries
+            .iter()
+            .map(|(what, combo)| {
+                let shown = hotkey::Combo::parse(combo).map(|c| c.text()).unwrap_or_else(|| "off".into());
+                format!("{what:<44} {shown}")
+            })
+            .collect();
+        labels.push(format!("Tray icon: {}", if cfg.tray { "on" } else { "off" }));
+        labels.push("Done".into());
+        let i = Select::with_theme(t)
+            .with_prompt("Which one?")
+            .items(&labels)
+            .default(labels.len() - 1)
+            .interact()?;
+        if i == labels.len() - 1 {
+            return Ok(());
+        }
+        if i == labels.len() - 2 {
+            cfg.tray = !cfg.tray;
+            continue;
+        }
+        let choice = Select::with_theme(t)
+            .items(&["Press a new combination", "Switch this shortcut off", "Back"])
+            .default(0)
+            .interact()?;
+        let value = match choice {
+            0 => {
+                println!("  Press the combination now (e.g. Ctrl+Alt+S)...");
+                let c = hotkey::capture_combo()?;
+                if !(c.ctrl || c.alt || c.meta) {
+                    println!("  {} has no Ctrl, Alt or Super, so it would fire while typing. Not used.", c.text());
+                    continue;
+                }
+                println!("  Set to {}.", c.text());
+                c.text()
+            }
+            1 => String::new(),
+            _ => continue,
+        };
+        match i {
+            0 => cfg.shortcut_session = value,
+            1 => cfg.shortcut_call = value,
+            2 => cfg.shortcut_correction = value,
+            3 => cfg.shortcut_mode = value,
+            _ => cfg.shortcut_settings = value,
+        }
+    }
 }
 
 fn ask_advanced(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {

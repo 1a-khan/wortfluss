@@ -56,6 +56,8 @@ struct Options {
     from: Option<String>,
     /// Save the transcript in this folder instead of the configured one.
     dir: Option<PathBuf>,
+    /// Keep the audio (overrides the setting for this session).
+    keep_audio: bool,
 }
 
 fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
@@ -63,6 +65,7 @@ fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
     let mut notes_arg: Option<String> = None;
     let mut from = None;
     let mut dir = None;
+    let mut keep_audio = cfg.session_keep_audio;
     let mut title = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -74,6 +77,8 @@ fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
             "--notes" | "-n" => notes_arg = Some(it.next().context("--notes needs lecture, meeting, summary or none")?.clone()),
             "--from" => from = Some(it.next().context("--from needs a source name (see `vtt mics`)")?.clone()),
             "--dir" => dir = Some(PathBuf::from(it.next().context("--dir needs a folder")?)),
+            "--keep-audio" => keep_audio = true,
+            "--no-audio" => keep_audio = false,
             other => title.push(other.to_string()),
         }
     }
@@ -91,7 +96,7 @@ fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
     } else {
         title.join(" ")
     };
-    Ok(Options { source, title, notes, from, dir })
+    Ok(Options { source, title, notes, from, dir, keep_audio })
 }
 
 /// `vtt session [start|run|stop|status] ...`
@@ -102,7 +107,9 @@ pub fn cmd(args: &[String]) -> Result<()> {
         Some("run") => run(rest),
         Some("stop") => stop(),
         Some("status") | None => status(),
-        Some(other) => bail!("unknown `vtt session {other}`: start, stop, status or run"),
+        Some("redo") => redo(rest),
+        Some("delete-audio") => delete_audio_cmd(rest),
+        Some(other) => bail!("unknown `vtt session {other}`: start, stop, status, redo, delete-audio or run"),
     }
 }
 
@@ -126,6 +133,9 @@ pub fn start(args: &[String]) -> Result<()> {
             println!("Transcript: {}", path.display());
             println!("Stop with `vtt session stop`{}.", if opts.notes.is_some() { " (notes are written then)" } else { "" });
             println!("Only record other people with their consent.");
+            if opts.source == Source::Both && mics::output_is_headphones() == Some(false) {
+                println!("Tip: use headphones. With loudspeakers the microphone also hears the other side, so their words can appear twice.");
+            }
             return Ok(());
         }
     }
@@ -217,6 +227,7 @@ pub fn run(args: &[String]) -> Result<()> {
         bail!("a session is already running: `vtt session status`");
     };
     platform::catch_stop_signals();
+    cleanup_old_audio(&cfg);
 
     // The transcript file.
     let dir = match &opts.dir {
@@ -248,10 +259,19 @@ pub fn run(args: &[String]) -> Result<()> {
     if show {
         println!("Press Ctrl+C to stop{}.\n", if opts.notes.is_some() { " and write the notes" } else { "" });
     }
+    let no_headphones = opts.source == Source::Both && mics::output_is_headphones() == Some(false);
     notify(&format!(
-        "Transcribing {}. Only record other people with their consent.\nStop: vtt session stop",
-        opts.source.describe()
+        "Transcribing {}. Only record other people with their consent.{}\nStop: vtt session stop",
+        opts.source.describe(),
+        if no_headphones {
+            "\nUse headphones: with loudspeakers the other side may be transcribed twice."
+        } else {
+            ""
+        }
     ));
+    if no_headphones {
+        println!("Tip: use headphones; with loudspeakers the other side may be transcribed twice.");
+    }
 
     // The streams.
     let mic = if cfg.mic.trim().is_empty() { mics::DEFAULT_MIC.to_string() } else { cfg.mic.trim().to_string() };
@@ -262,9 +282,17 @@ pub fn run(args: &[String]) -> Result<()> {
         Source::Both => vec![("Others", system), ("You", mic)],
     };
     let mut streams = Vec::new();
+    let mut audio_files = Vec::new();
     for (label, name) in wanted {
         let rec = SourceRecorder::start(&name).with_context(|| format!("cannot record {name}"))?;
-        streams.push((label, rec, 0.0f32)); // (label, recorder, seconds taken so far)
+        let wav = if opts.keep_audio {
+            let p = audio_path(&path, label)?;
+            audio_files.push(p.clone());
+            Some(WavWriter::create(&p)?)
+        } else {
+            None
+        };
+        streams.push((label, rec, 0.0f32, wav)); // (label, recorder, seconds taken, kept audio)
     }
 
     // One worker transcribes pieces in order and appends them to the file.
@@ -287,8 +315,11 @@ pub fn run(args: &[String]) -> Result<()> {
     let mut stopped_quietly = false;
     while !platform::stop_requested() {
         thread::sleep(Duration::from_millis(500));
-        for (label, rec, taken) in streams.iter_mut() {
+        for (label, rec, taken, wav) in streams.iter_mut() {
             while let Some(clip) = rec.take_piece(min, max) {
+                if let Some(w) = wav {
+                    w.append(&clip.samples);
+                }
                 let secs = clip.seconds();
                 let at = *taken;
                 *taken += secs;
@@ -311,8 +342,14 @@ pub fn run(args: &[String]) -> Result<()> {
     if show {
         println!("\nStopping: transcribing the last piece...");
     }
-    for (label, rec, taken) in streams {
+    for (label, rec, taken, wav) in streams {
         let clip = rec.stop();
+        if let Some(mut w) = wav {
+            w.append(&clip.samples);
+            if let Err(e) = w.finish() {
+                eprintln!("could not save the session audio: {e:#}");
+            }
+        }
         if clip.seconds() >= 0.4 && clip.has_speech() {
             let _ = tx.send(Job { clip, label, at: taken });
         }
@@ -342,8 +379,240 @@ pub fn run(args: &[String]) -> Result<()> {
     let _ = std::fs::remove_file(platform::runtime_file(STATE_FILE)?);
     let why = if stopped_quietly { "Stopped after 30 minutes without speech. " } else { "" };
     println!("{why}Session saved ({summary}): {}", path.display());
-    notify(&format!("{why}Saved ({summary}):\n{}", path.display()));
+    drop(_lock); // `vtt session stop` returns now; only the audio question is left
+    if audio_files.is_empty() {
+        notify(&format!("{why}Saved ({summary}):\n{}", path.display()));
+    } else {
+        ask_delete_audio(&path, &audio_files, &cfg, &format!("{why}Saved ({summary})."));
+    }
     Ok(())
+}
+
+// ---- kept session audio ----
+
+/// `<folder>/.audio/<transcript name>.<others|you|audio>.wav`
+fn audio_path(transcript: &Path, label: &str) -> Result<PathBuf> {
+    let dir = transcript.parent().context("bad transcript path")?.join(".audio");
+    std::fs::create_dir_all(&dir)?;
+    let stem = transcript.file_stem().unwrap_or_default().to_string_lossy();
+    let part = if label.is_empty() { "audio".to_string() } else { label.to_lowercase() };
+    Ok(dir.join(format!("{stem}.{part}.wav")))
+}
+
+/// Kept audio files of a transcript, with their labels.
+fn audio_files_of(transcript: &Path) -> Vec<(PathBuf, &'static str)> {
+    let Some(dir) = transcript.parent().map(|d| d.join(".audio")) else { return Vec::new() };
+    let stem = transcript.file_stem().unwrap_or_default().to_string_lossy().to_string();
+    ["others", "you", "audio"]
+        .iter()
+        .map(|part| {
+            let label = match *part {
+                "others" => "Others",
+                "you" => "You",
+                _ => "",
+            };
+            (dir.join(format!("{stem}.{part}.wav")), label)
+        })
+        .filter(|(p, _)| p.exists())
+        .collect()
+}
+
+/// After a session with kept audio: a notification asks whether to delete it.
+fn ask_delete_audio(transcript: &Path, files: &[PathBuf], cfg: &Config, saved: &str) {
+    let mb: u64 = files.iter().filter_map(|f| std::fs::metadata(f).ok()).map(|m| m.len()).sum::<u64>() / 1_000_000;
+    let body = format!(
+        "{saved}\n{}\nIs the transcript OK? The audio ({mb} MB) is only needed to redo it \
+         (`vtt session redo`). Otherwise it is deleted after {} days.",
+        transcript.display(),
+        cfg.session_audio_days
+    );
+    let (tx, rx) = mpsc::channel();
+    let shown = notify_rust::Notification::new()
+        .summary("vtt session: delete the audio?")
+        .body(&body)
+        .action("delete", "Delete audio")
+        .action("keep", "Keep for now")
+        .timeout(notify_rust::Timeout::Never)
+        .show();
+    let Ok(handle) = shown else { return };
+    thread::spawn(move || {
+        handle.wait_for_action(|action| {
+            let _ = tx.send(action.to_string());
+        })
+    });
+    // Wait for an answer, at most an hour; no answer keeps the audio until it expires.
+    if let Ok(answer) = rx.recv_timeout(Duration::from_secs(3600)) {
+        if answer == "delete" {
+            for f in files {
+                let _ = std::fs::remove_file(f);
+            }
+            println!("Session audio deleted.");
+        } else {
+            println!("Session audio kept.");
+        }
+    }
+}
+
+/// Delete kept session audio older than `session_audio_days`.
+pub fn cleanup_old_audio(cfg: &Config) {
+    let Ok(dir) = session_dir(cfg).map(|d| d.join(".audio")) else { return };
+    let max_age = Duration::from_secs(cfg.session_audio_days.max(1) * 86_400);
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    for e in entries.flatten() {
+        let p = e.path();
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > max_age);
+        if old && p.extension().is_some_and(|x| x == "wav") {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+}
+
+/// `vtt session delete-audio [FILE]`: delete the kept audio of one transcript, or all.
+fn delete_audio_cmd(args: &[String]) -> Result<()> {
+    let files: Vec<PathBuf> = match args.first() {
+        Some(f) => audio_files_of(Path::new(f)).into_iter().map(|(p, _)| p).collect(),
+        None => {
+            let cfg = config::load()?;
+            let dir = session_dir(&cfg)?.join(".audio");
+            std::fs::read_dir(&dir)
+                .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect())
+                .unwrap_or_default()
+        }
+    };
+    for f in &files {
+        std::fs::remove_file(f)?;
+    }
+    println!("{} audio file(s) deleted.", files.len());
+    Ok(())
+}
+
+/// `vtt session redo FILE [--notes TYPE]`: transcribe a session again from its kept audio
+/// (e.g. after changing the model or language), then write the notes again.
+fn redo(args: &[String]) -> Result<()> {
+    let file = args.first().context("usage: vtt session redo FILE [--notes lecture|meeting|summary|none]")?;
+    let path = PathBuf::from(file);
+    let cfg = config::load()?;
+    let audio = audio_files_of(&path);
+    if audio.is_empty() {
+        bail!("no kept audio for this transcript (session_keep_audio was off, or it was deleted)");
+    }
+    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let head_end = text
+        .find(notes::TRANSCRIPT_HEADING)
+        .map(|i| i + notes::TRANSCRIPT_HEADING.len())
+        .unwrap_or(0);
+    let both = audio.len() > 1;
+    let notes_kind = match args.iter().position(|a| a == "--notes").and_then(|i| args.get(i + 1)) {
+        Some(k) if k == "none" => None,
+        Some(k) => Some(Kind::parse(k).with_context(|| format!("unknown notes type `{k}`"))?),
+        None => Some(if both { Kind::Meeting } else { Kind::Lecture }),
+    };
+
+    // Cut every stream into pieces offline, then transcribe in time order.
+    let piece = cfg.piece_seconds.clamp(10, 120) as f32;
+    let (min, max) = (piece * 0.67, piece * 1.5);
+    let mut jobs = Vec::new();
+    for (file, label) in &audio {
+        let bytes = std::fs::read(file)?;
+        let mut buf: Vec<f32> = bytes
+            .get(44..)
+            .unwrap_or_default()
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+            .collect();
+        let mut at = 0.0f32;
+        while let Some(clip) = audio::cut_piece(&mut buf, min, max) {
+            let secs = clip.seconds();
+            if clip.has_speech() {
+                jobs.push(Job { clip, label, at });
+            }
+            at += secs;
+        }
+        let rest = audio::Clip { samples: buf };
+        if rest.seconds() >= 0.4 && rest.has_speech() {
+            jobs.push(Job { clip: rest, label, at });
+        }
+    }
+    jobs.sort_by(|a, b| a.at.total_cmp(&b.at));
+    let a = cfg.active();
+    println!("Transcribing {} piece(s) again with {} {} ...", jobs.len(), a.provider.name, a.model);
+    platform::write_private(&path, &format!("{}
+
+", &text[..head_end]))?;
+    let mut words = 0;
+    for job in jobs {
+        words += transcribe_piece(job, &cfg, &path, true);
+    }
+    if let Some(kind) = notes_kind {
+        if words >= 10 {
+            println!("Writing {} ...", kind.name());
+            println!("{}", notes::write_for_file(&path, kind)?);
+        }
+    }
+    println!("Done: {}", path.display());
+    Ok(())
+}
+
+/// A 16 kHz mono WAV file written piece by piece; the header is completed at the end.
+struct WavWriter {
+    file: std::fs::File,
+    samples: u32,
+}
+
+impl WavWriter {
+    fn create(path: &Path) -> Result<Self> {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600) // contains voices
+            .open(path)
+            .with_context(|| format!("creating {}", path.display()))?;
+        file.write_all(&wav_header(0))?;
+        Ok(Self { file, samples: 0 })
+    }
+
+    fn append(&mut self, samples: &[f32]) {
+        let bytes: Vec<u8> = samples
+            .iter()
+            .flat_map(|s| ((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).to_le_bytes())
+            .collect();
+        if self.file.write_all(&bytes).is_ok() {
+            self.samples += samples.len() as u32;
+        }
+    }
+
+    fn finish(mut self) -> Result<()> {
+        use std::io::{Seek, SeekFrom};
+        self.file.seek(SeekFrom::Start(0))?;
+        self.file.write_all(&wav_header(self.samples))?;
+        Ok(())
+    }
+}
+
+fn wav_header(samples: u32) -> Vec<u8> {
+    let rate = audio::TARGET_RATE;
+    let data = samples * 2;
+    let mut h = Vec::with_capacity(44);
+    h.extend_from_slice(b"RIFF");
+    h.extend_from_slice(&(36 + data).to_le_bytes());
+    h.extend_from_slice(b"WAVEfmt ");
+    h.extend_from_slice(&16u32.to_le_bytes());
+    h.extend_from_slice(&1u16.to_le_bytes());
+    h.extend_from_slice(&1u16.to_le_bytes());
+    h.extend_from_slice(&rate.to_le_bytes());
+    h.extend_from_slice(&(rate * 2).to_le_bytes());
+    h.extend_from_slice(&2u16.to_le_bytes());
+    h.extend_from_slice(&16u16.to_le_bytes());
+    h.extend_from_slice(b"data");
+    h.extend_from_slice(&data.to_le_bytes());
+    h
 }
 
 /// Transcribe one piece and append it to the transcript. Returns the number of words.
@@ -411,6 +680,25 @@ mod tests {
         let o = parse_options(&["-s".into(), "mic".into(), "-n".into(), "none".into()], &cfg).unwrap();
         assert_eq!((o.source, o.notes), (Source::Mic, None));
         assert!(parse_options(&["--source".into(), "radio".into()], &cfg).is_err());
+    }
+
+    #[test]
+    fn kept_audio_round_trip() {
+        let dir = std::env::temp_dir().join(format!("vtt-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let transcript = dir.join("2026-11-14 10-00 Call.md");
+        let p = audio_path(&transcript, "Others").unwrap();
+        let mut w = WavWriter::create(&p).unwrap();
+        w.append(&[0.5; 16_000]);
+        w.append(&[0.0; 8_000]);
+        w.finish().unwrap();
+        let bytes = std::fs::read(&p).unwrap();
+        assert_eq!(bytes.len(), 44 + 24_000 * 2);
+        assert_eq!(u32::from_le_bytes(bytes[40..44].try_into().unwrap()), 48_000);
+        let found = audio_files_of(&transcript);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1, "Others");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

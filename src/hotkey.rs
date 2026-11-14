@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Event {
     Down,
     Up,
@@ -25,6 +25,8 @@ pub enum Event {
     Reload,
     /// The session key was pressed (start/stop a session).
     SessionKey,
+    /// A keyboard shortcut or tray menu entry.
+    Shortcut(Action),
 }
 
 const PERMISSION_HELP: &str = "no keyboard could be opened. Your user needs read access to \
@@ -47,41 +49,151 @@ pub fn keyboard_count() -> usize {
     keyboards().len()
 }
 
-pub fn listen(hotkey: Key, session_key: Option<Key>, tx: Sender<Event>) -> Result<usize> {
+/// Something to do, triggered by a keyboard shortcut or the tray menu.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Action {
+    /// Start or stop a session with the default source.
+    Session,
+    /// Start or stop a call session (system audio + microphone).
+    CallSession,
+    /// Start a session with this source ("system", "mic", "both").
+    StartSession(String),
+    StopSession,
+    ToggleCorrection,
+    ToggleMode,
+    ToggleSounds,
+    ToggleKeepAudio,
+    SetMic(String),
+    SetNotes(String),
+    OpenTranscripts,
+    OpenSettings,
+    Quit,
+}
+
+/// A key combination like Ctrl+Alt+S.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Combo {
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub meta: bool,
+    pub key: Option<Key>,
+}
+
+impl Combo {
+    /// "Ctrl+Alt+S", "ctrl+alt+f9", "Super+Shift+KEY_M". None for "" / "off" / invalid.
+    pub fn parse(text: &str) -> Option<Combo> {
+        let mut c = Combo::default();
+        for part in text.split('+').map(str::trim).filter(|p| !p.is_empty()) {
+            match part.to_lowercase().as_str() {
+                "ctrl" | "control" | "strg" => c.ctrl = true,
+                "alt" => c.alt = true,
+                "shift" => c.shift = true,
+                "super" | "meta" | "win" | "windows" => c.meta = true,
+                "off" | "none" => return None,
+                key => {
+                    let name = if key.starts_with("key_") { key.to_uppercase() } else { format!("KEY_{}", key.to_uppercase()) };
+                    c.key = Some(name.parse().ok()?);
+                }
+            }
+        }
+        // A combination needs a key and at least one of Ctrl/Alt/Super, so normal typing
+        // never triggers it.
+        (c.key.is_some() && (c.ctrl || c.alt || c.meta)).then_some(c)
+    }
+
+    pub fn text(&self) -> String {
+        let mut parts = Vec::new();
+        if self.ctrl { parts.push("Ctrl".to_string()); }
+        if self.alt { parts.push("Alt".to_string()); }
+        if self.shift { parts.push("Shift".to_string()); }
+        if self.meta { parts.push("Super".to_string()); }
+        if let Some(k) = self.key { parts.push(pretty(&format!("{k:?}"))); }
+        parts.join("+")
+    }
+}
+
+/// Modifier keys held on one keyboard.
+#[derive(Default)]
+struct Mods {
+    ctrl: u8,
+    alt: u8,
+    shift: u8,
+    meta: u8,
+}
+
+impl Mods {
+    /// Track a modifier; returns true if `k` is a modifier key.
+    fn update(&mut self, k: Key, down: bool) -> bool {
+        let slot = match k {
+            Key::KEY_LEFTCTRL | Key::KEY_RIGHTCTRL => &mut self.ctrl,
+            Key::KEY_LEFTALT | Key::KEY_RIGHTALT => &mut self.alt,
+            Key::KEY_LEFTSHIFT | Key::KEY_RIGHTSHIFT => &mut self.shift,
+            Key::KEY_LEFTMETA | Key::KEY_RIGHTMETA => &mut self.meta,
+            _ => return false,
+        };
+        *slot = if down { slot.saturating_add(1).min(2) } else { slot.saturating_sub(1) };
+        true
+    }
+
+    fn matches(&self, c: &Combo, k: Key) -> bool {
+        c.key == Some(k)
+            && (self.ctrl > 0) == c.ctrl
+            && (self.alt > 0) == c.alt
+            && (self.shift > 0) == c.shift
+            && (self.meta > 0) == c.meta
+    }
+}
+
+pub fn listen(
+    hotkey: Key,
+    session_key: Option<Key>,
+    shortcuts: Vec<(Combo, Action)>,
+    tx: Sender<Event>,
+) -> Result<usize> {
     let mut count = 0;
     for mut dev in keyboards() {
         if !dev.supported_keys().is_some_and(|k| k.contains(hotkey)) {
             continue;
         }
-        let tx = tx.clone();
-        thread::spawn(move || loop {
-            let events = match dev.fetch_events() {
-                Ok(events) => events,
-                Err(e) => {
-                    eprintln!("stopped reading a keyboard: {e}");
-                    return;
-                }
-            };
-            for ev in events {
-                let InputEventKind::Key(k) = ev.kind() else { continue };
-                let event = if Some(k) == session_key {
-                    if ev.value() != 1 {
-                        continue;
+        let (tx, shortcuts) = (tx.clone(), shortcuts.clone());
+        thread::spawn(move || {
+            let mut mods = Mods::default();
+            loop {
+                let events = match dev.fetch_events() {
+                    Ok(events) => events,
+                    Err(e) => {
+                        eprintln!("stopped reading a keyboard: {e}");
+                        return;
                     }
-                    Event::SessionKey
-                } else if k == hotkey {
-                    match ev.value() {
-                        1 => Event::Down,
-                        0 => Event::Up,
-                        _ => continue, // auto-repeat
-                    }
-                } else if ev.value() == 1 && k.code() < 0x100 {
-                    Event::OtherKey // keyboard keys only, not mouse buttons
-                } else {
-                    continue;
                 };
-                if tx.send(event).is_err() {
-                    return;
+                for ev in events {
+                    let InputEventKind::Key(k) = ev.kind() else { continue };
+                    if ev.value() != 2 {
+                        mods.update(k, ev.value() == 1);
+                    }
+                    let mut out = Vec::new();
+                    if Some(k) == session_key {
+                        if ev.value() == 1 {
+                            out.push(Event::SessionKey);
+                        }
+                    } else if k == hotkey {
+                        match ev.value() {
+                            1 => out.push(Event::Down),
+                            0 => out.push(Event::Up),
+                            _ => {} // auto-repeat
+                        }
+                    } else if ev.value() == 1 && k.code() < 0x100 {
+                        out.push(Event::OtherKey); // keyboard keys only, not mouse buttons
+                        if let Some((_, action)) = shortcuts.iter().find(|(c, _)| mods.matches(c, k)) {
+                            out.push(Event::Shortcut(action.clone()));
+                        }
+                    }
+                    for e in out {
+                        if tx.send(e).is_err() {
+                            return;
+                        }
+                    }
                 }
             }
         });
@@ -91,6 +203,51 @@ pub fn listen(hotkey: Key, session_key: Option<Key>, tx: Sender<Event>) -> Resul
         bail!(PERMISSION_HELP);
     }
     Ok(count)
+}
+
+/// Wait for a key combination (setup). Returns when a non-modifier key is pressed.
+pub fn capture_combo() -> Result<Combo> {
+    let (tx, rx) = mpsc::channel();
+    let mut count = 0;
+    for mut dev in keyboards() {
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let mut mods = Mods::default();
+            loop {
+                let Ok(events) = dev.fetch_events() else { return };
+                for ev in events {
+                    let InputEventKind::Key(k) = ev.kind() else { continue };
+                    if ev.value() == 2 {
+                        continue;
+                    }
+                    let is_mod = mods.update(k, ev.value() == 1);
+                    if !is_mod && ev.value() == 1 && k.code() < 0x100 {
+                        let c = Combo {
+                            ctrl: mods.ctrl > 0,
+                            alt: mods.alt > 0,
+                            shift: mods.shift > 0,
+                            meta: mods.meta > 0,
+                            key: Some(k),
+                        };
+                        if tx.send(c).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        count += 1;
+    }
+    if count == 0 {
+        bail!(PERMISSION_HELP);
+    }
+    drop(tx);
+    thread::sleep(Duration::from_millis(300));
+    while rx.try_recv().is_ok() {}
+    let c = rx.recv()?;
+    thread::sleep(Duration::from_millis(400));
+    crate::platform::flush_terminal_input();
+    Ok(c)
 }
 
 /// Wait for the user to press a key and return it (for `vtt setup`).
@@ -194,5 +351,36 @@ mod tests {
         assert!(warning(Key::KEY_A).is_some());
         assert!(warning(Key::KEY_RIGHTALT).is_some());
         assert!(warning(Key::KEY_F9).is_none());
+    }
+
+    #[test]
+    fn combos() {
+        let c = Combo::parse("Ctrl+Alt+S").unwrap();
+        assert!(c.ctrl && c.alt && !c.shift && c.key == Some(Key::KEY_S));
+        assert_eq!(c.text(), "Ctrl+Alt+S");
+        assert_eq!(Combo::parse("ctrl + alt + f9").unwrap().key, Some(Key::KEY_F9));
+        assert!(Combo::parse("S").is_none(), "a plain letter is not a shortcut");
+        assert!(Combo::parse("Shift+S").is_none(), "Shift alone would fire while typing");
+        assert!(Combo::parse("").is_none() && Combo::parse("off").is_none());
+
+        let mut m = Mods::default();
+        m.update(Key::KEY_LEFTCTRL, true);
+        m.update(Key::KEY_RIGHTALT, true);
+        assert!(m.matches(&c, Key::KEY_S));
+        m.update(Key::KEY_LEFTSHIFT, true);
+        assert!(!m.matches(&c, Key::KEY_S), "extra Shift: different shortcut");
+    }
+}
+
+#[cfg(test)]
+mod combo_round_trip {
+    use super::*;
+
+    #[test]
+    fn text_parses_back() {
+        for t in ["Ctrl+Alt+S", "Ctrl+Alt+F9", "Super+Shift+M", "Ctrl+Alt+1"] {
+            let c = Combo::parse(t).unwrap();
+            assert_eq!(Combo::parse(&c.text()), Some(c), "{t} -> {}", c.text());
+        }
     }
 }

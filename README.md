@@ -61,6 +61,25 @@ until you hit rate limits. `vtt usage` shows your own numbers.
 Language: "detect automatically" works well if you switch languages. A fixed language is a bit
 faster and avoids rare mix-ups. **Spelling help** (names, brands) fixes words like "Grog" → "Groq".
 
+## Tray icon and keyboard shortcuts
+
+The vtt icon in the top bar (system tray) has a right-click menu: start/stop a session
+(computer audio, microphone, call), open the transcripts folder, and the common settings
+(correction, hold/toggle, microphone, notes type, keep session audio, beeps), plus
+"All settings..." and "Quit". On GNOME this needs the AppIndicator extension (on by default
+on Ubuntu); KDE shows it natively.
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+Alt+S | start/stop a session (what the computer plays) |
+| Ctrl+Alt+M | start/stop a call session (You / Others) |
+| Ctrl+Alt+K | spelling correction on/off |
+| Ctrl+Alt+H | hold <-> toggle |
+| Ctrl+Alt+V | open all settings |
+
+Change them by pressing the new combination: `vtt set shortcuts`. They are read from the
+keyboard like the dictation key, so the focused app also receives them.
+
 ## Session mode: lectures, videos, meetings
 
 Instead of typing, vtt writes everything said into `~/Documents/vtt/YYYY-MM-DD HH-MM Title.md`,
@@ -75,7 +94,10 @@ live, with `[hh:mm:ss]` times, and writes notes at the top when the session stop
 - Notes: lecture notes (summary, key points, terms, questions), meeting minutes (decisions,
   action items), or a summary; written by the text model of `vtt set correction`.
   `vtt notes FILE TYPE` redoes them without touching the transcript.
-- Text only, no audio kept. Silence is skipped; a session stops after 30 min without speech.
+- Text only by default. Optional: keep the audio (`--keep-audio` or `vtt set session`); a
+  notification then asks to delete it, it expires after 7 days, and `vtt session redo FILE`
+  transcribes it again. Silence is skipped; a session stops after 30 min without speech.
+- Call sessions warn when no headphones are connected (echo would duplicate text).
 - Optional session key (press to start, again to stop) and defaults: `vtt set session`.
 - Cost for 1 hour: ~$0.01 transcript (OpenRouter Whisper Turbo) + ~$0.002 notes.
 - **Consent:** only record other people with their permission (in Germany § 201 StGB).
@@ -184,6 +206,7 @@ The code is split so a Windows build replaces only the OS-specific parts:
 | `hotkey.rs` | evdev (`/dev/input`) | `SetWindowsHookEx(WH_KEYBOARD_LL)`, no permissions needed |
 | `typer.rs` + `layout.rs` | uinput + xkbcommon key mapping | `SendInput` with `KEYEVENTF_UNICODE`: any character, any layout, no mapping needed |
 | `audio.rs` | cpal (ALSA) | cpal (WASAPI), unchanged |
+| `tray.rs` | StatusNotifierItem (ksni, D-Bus) | `tray-icon` crate |
 | `mics.rs` | sound-server source list + per-source recording (PulseAudio protocol) | cpal/WASAPI devices; system audio via WASAPI loopback |
 | `setup.rs`, `config.rs`, `providers.rs`, `stt.rs`, `usage.rs` | shared | shared |
 

@@ -253,3 +253,47 @@ impl SourceRecorder {
         }
     }
 }
+
+/// Is the current output headphones or a headset? None if it can't be told.
+/// (Wired: the active port of the sound card; Bluetooth/USB headsets by name.)
+pub fn output_is_headphones() -> Option<bool> {
+    let (mut sock, version) = connect().ok()?;
+    let cmd = protocol::Command::GetSinkInfo(protocol::GetSinkInfo {
+        name: Some(protocol::DEFAULT_SINK.to_owned()),
+        ..Default::default()
+    });
+    protocol::write_command_message(sock.get_mut(), 2, &cmd, version).ok()?;
+    let (_, sink) = protocol::read_reply_message::<protocol::SinkInfo>(&mut sock, version).ok()?;
+    let name = sink.name.to_string_lossy().to_lowercase();
+    let desc = sink.description.map(|d| d.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let port = sink
+        .ports
+        .get(sink.active_port)
+        .map(|p| {
+            format!(
+                "{} {}",
+                p.name.to_string_lossy(),
+                p.description.as_ref().map(|d| d.to_string_lossy().to_string()).unwrap_or_default()
+            )
+            .to_lowercase()
+        })
+        .unwrap_or_default();
+    Some(looks_like_headphones(&name, &desc, &port))
+}
+
+fn looks_like_headphones(name: &str, desc: &str, port: &str) -> bool {
+    let words = ["headphone", "headset", "kopfhörer", "earbuds", "buds", "airpods"];
+    name.contains("bluez") || words.iter().any(|w| desc.contains(w) || port.contains(w))
+}
+
+#[cfg(test)]
+mod headphone_tests {
+    use super::looks_like_headphones;
+
+    #[test]
+    fn detects() {
+        assert!(looks_like_headphones("alsa_output.pci", "built-in audio", "[out] headphones"));
+        assert!(looks_like_headphones("bluez_output.aa_bb.1", "jbl", ""));
+        assert!(!looks_like_headphones("alsa_output.pci", "built-in audio", "[out] speaker"));
+    }
+}

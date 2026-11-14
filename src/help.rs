@@ -12,11 +12,17 @@ GETTING STARTED
     That's it: vtt then runs in the background and starts at every login.
     Default: hold Right Ctrl, speak, release.
 
+WITHOUT THE TERMINAL
+    Tray icon (top bar): right-click for sessions and the common settings.
+    Ctrl+Alt+S  session (what the computer plays)    Ctrl+Alt+M  call session
+    Ctrl+Alt+K  correction on/off                    Ctrl+Alt+H  hold <-> toggle
+    Ctrl+Alt+V  all settings                         change them: vtt set shortcuts
+
 COMMANDS
     vtt setup        menu of all settings with current values; change one at a time
     vtt set <what>   change one thing directly: service, model, key, correction, phrases,
                      language, mic, hotkey, mode, sounds, layout, autostart, session,
-                     advanced
+                     shortcuts, advanced
     vtt phrases      list names/words to spell right; vtt phrases add \"A, B\" / remove \"A\"
     vtt check        test everything vtt needs and show how to fix problems
     vtt start        start in the background        vtt stop    stop it
@@ -26,6 +32,8 @@ COMMANDS
     vtt mics         list the microphones; choose one with `vtt set mic`
     vtt session start [title] [--source system|mic|both]   transcribe a lecture/meeting
     vtt session stop  stop it and write notes        vtt session status
+    vtt session redo FILE   transcribe again from kept audio (--keep-audio)
+    vtt session delete-audio [FILE]                   delete kept session audio
     vtt notes FILE [lecture|meeting|summary]          (re)write notes for a transcript
     vtt autostart on|off      start at login or not
     vtt test-type    type a test sentence after 3 seconds
@@ -192,8 +200,14 @@ adds notes at the end.
     vtt session status                          is one running? which file?
     vtt notes FILE meeting                      write other notes for a transcript
 
-Options: --notes lecture|meeting|summary|none, --dir FOLDER. Defaults, a session key
-(press to start, press again to stop) and the folder: `vtt set session`.
+Options: --notes lecture|meeting|summary|none, --dir FOLDER, --keep-audio. Defaults,
+a session key (press to start, press again to stop) and the folder: `vtt set session`.
+Also from the tray icon menu, or Ctrl+Alt+S (session) / Ctrl+Alt+M (call).
+
+KEEP AUDIO (off by default): the audio is saved next to the transcript (hidden .audio
+folder). After the session a notification asks: Delete audio / Keep for now. Kept audio
+is deleted automatically after 7 days. `vtt session redo FILE` transcribes it again,
+e.g. after changing the model or language.
 
 Files: ~/Documents/vtt/2026-11-14 10-00 Title.md. Notes at the top, transcript with
 [hh:mm:ss] times below. Only text is kept, never audio. Pauses and silence are skipped;
@@ -203,7 +217,7 @@ Notes use the text model of `vtt set correction` (correction itself can stay off
 Cost for 1 hour: ~$0.01 transcript (OpenRouter Whisper Turbo) + ~$0.002 notes.
 
 \"both\" with loudspeakers: the microphone also hears the other side, so text can
-appear twice. Use headphones.
+appear twice. Use headphones; vtt reminds you when no headphones are connected.
 
 CONSENT: only record other people (meetings, calls, lectures) with their permission.
 In Germany recording non-public speech without consent is a criminal offence

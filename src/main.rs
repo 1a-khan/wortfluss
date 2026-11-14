@@ -9,6 +9,7 @@ mod notes;
 mod platform;
 mod providers;
 mod session;
+mod tray;
 mod secrets;
 mod setup;
 mod stt;
@@ -167,7 +168,25 @@ fn daemon() -> Result<()> {
 
     let (tx, rx) = mpsc::channel();
     let session_key = hotkey::parse(&cfg.session_hotkey).filter(|k| *k != hotkey);
-    let keyboards = hotkey::listen(hotkey, session_key, tx.clone())?;
+    let keyboards = hotkey::listen(hotkey, session_key, cfg.shortcuts(), tx.clone())?;
+    let tray = if cfg.tray { tray::start(&cfg, tx.clone()) } else { None };
+    session::cleanup_old_audio(&cfg); // kept session audio past its expiry
+    if let Some(t) = tray.clone() {
+        // Sessions run in their own process: keep the tray's session state current.
+        thread::spawn(move || {
+            let mut last = session::is_running();
+            loop {
+                thread::sleep(Duration::from_secs(2));
+                let now = session::is_running();
+                if now != last {
+                    last = now;
+                    if t.update(|t| t.session = now).is_none() {
+                        return;
+                    }
+                }
+            }
+        });
+    }
     let reload_pending = Arc::new(AtomicBool::new(false));
     watch_config(tx.clone(), reload_pending.clone());
 
@@ -203,6 +222,9 @@ fn daemon() -> Result<()> {
     };
     let stop = |rec: &mut Recording, current: &AtomicU64| {
         current.store(0, SeqCst);
+        if let Some(t) = &tray {
+            t.update(|t| t.dictating = false);
+        }
         let Some(r) = rec.recorder.take() else { return };
         let clip = r.stop();
         let worth = clip.seconds() >= 0.4 && clip.has_speech();
@@ -216,6 +238,9 @@ fn daemon() -> Result<()> {
         }
     };
 
+    // Toggle mode reacts to a clean tap (press and release, no other key in between), so
+    // a Ctrl hotkey used in Ctrl+C or Ctrl+Alt+S doesn't start or stop dictation.
+    let mut tap_clean = false;
     for event in rx {
         use hotkey::Event::*;
         match event {
@@ -223,11 +248,30 @@ fn daemon() -> Result<()> {
             Up => key_down.store(false, SeqCst),
             _ => {}
         }
+        let event = match (cfg.mode, event) {
+            (Mode::Toggle, Down) => {
+                tap_clean = true;
+                continue;
+            }
+            (Mode::Toggle, OtherKey) => {
+                tap_clean = false;
+                OtherKey
+            }
+            (Mode::Toggle, Up) if tap_clean => {
+                tap_clean = false;
+                Down // the tap: start or stop
+            }
+            (Mode::Toggle, Up) => continue,
+            (_, e) => e,
+        };
         match (cfg.mode, event) {
             (Mode::Hold, Down) | (Mode::Toggle, Down) if rec.recorder.is_none() => {
                 match audio::Recorder::start() {
                     Ok(r) => {
                         rec = Recording { recorder: Some(r), ..Default::default() };
+                        if let Some(t) = &tray {
+                            t.update(|t| t.dictating = true);
+                        }
                         take += 1;
                         current.store(take, SeqCst);
                         after(Duration::from_secs(cfg.max_seconds.max(1)), Timeout(take));
@@ -277,24 +321,16 @@ fn daemon() -> Result<()> {
                 ));
                 stop(&mut rec, &current);
             }
-            (_, SessionKey) => {
-                // Start or stop a session; runs in its own process.
-                thread::spawn(|| {
-                    let result = if session::is_running() {
-                        platform::stop_named("vtt-session", Duration::from_secs(300)).map(|_| ())
-                    } else {
-                        platform::start_background_with(&["session", "run"])
-                    };
-                    if let Err(e) = result {
-                        report(&format!("session: {e:#}"));
-                    }
-                });
-            }
+            (_, SessionKey) => handle_action(hotkey::Action::Session),
+            (_, Shortcut(action)) => handle_action(action),
             (Mode::Hold, OtherKey) if rec.recorder.is_some() => {
                 if rec.pieces == 0 {
                     // The key was part of a shortcut (e.g. Ctrl+C): discard silently.
                     rec.recorder = None;
                     current.store(0, SeqCst);
+                    if let Some(t) = &tray {
+                        t.update(|t| t.dictating = false);
+                    }
                 } else {
                     stop(&mut rec, &current); // long dictation: keep what was said
                 }
@@ -313,6 +349,105 @@ fn daemon() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Carry out a shortcut or tray menu action. Settings changes are saved to config.toml;
+/// the running vtt then restarts itself with them.
+fn handle_action(action: hotkey::Action) {
+    use hotkey::Action::*;
+    let on = |b: bool| if b { "on" } else { "off" };
+    match action {
+        Session => session_toggle(None),
+        CallSession => session_toggle(Some("both")),
+        StartSession(src) => session_toggle(Some(&src)),
+        StopSession => session_toggle(None),
+        ToggleCorrection => change_setting(|c| {
+            c.correct_text = !c.correct_text;
+            format!("Spelling & grammar correction {}", on(c.correct_text))
+        }),
+        ToggleMode => change_setting(|c| {
+            c.mode = if c.mode == Mode::Hold { Mode::Toggle } else { Mode::Hold };
+            let key = hotkey::pretty(&c.hotkey);
+            if c.mode == Mode::Hold {
+                format!("Hold {key} while you speak")
+            } else {
+                format!("Press {key} to start, again to stop")
+            }
+        }),
+        ToggleSounds => change_setting(|c| {
+            c.sounds = !c.sounds;
+            format!("Beeps {}", on(c.sounds))
+        }),
+        ToggleKeepAudio => change_setting(|c| {
+            c.session_keep_audio = !c.session_keep_audio;
+            format!("Keep session audio {}", on(c.session_keep_audio))
+        }),
+        SetMic(name) => change_setting(move |c| {
+            c.mic = name;
+            format!("Microphone: {}", mics::describe(&c.mic))
+        }),
+        SetNotes(kind) => change_setting(move |c| {
+            c.session_notes = kind;
+            format!("Notes after a session: {}", c.session_notes)
+        }),
+        OpenTranscripts => {
+            let result = config::load()
+                .and_then(|c| session::session_dir(&c))
+                .and_then(|d| {
+                    std::fs::create_dir_all(&d)?;
+                    platform::open_path(&d)
+                });
+            if let Err(e) = result {
+                report(&format!("{e:#}"));
+            }
+        }
+        OpenSettings => {
+            if let Err(e) = platform::open_in_terminal(&["setup"]) {
+                report(&format!("{e:#}"));
+            }
+        }
+        Quit => {
+            info("vtt stopped. Start it again with `vtt start` (it also starts at login).");
+            std::process::exit(0);
+        }
+    }
+}
+
+/// Start a session (with this source), or stop the running one.
+fn session_toggle(source: Option<&str>) {
+    let source = source.map(str::to_string);
+    thread::spawn(move || {
+        let result = if session::is_running() {
+            platform::stop_named("vtt-session", Duration::from_secs(300)).map(|_| ())
+        } else {
+            let mut args = vec!["session", "run"];
+            if let Some(s) = &source {
+                args.extend(["--source", s.as_str()]);
+            }
+            platform::start_background_with(&args)
+        };
+        if let Err(e) = result {
+            report(&format!("session: {e:#}"));
+        }
+    });
+}
+
+fn change_setting(f: impl FnOnce(&mut Config) -> String) {
+    let result = config::load().and_then(|mut c| {
+        let msg = f(&mut c);
+        config::save(&c)?;
+        Ok(msg)
+    });
+    match result {
+        Ok(msg) => info(&msg),
+        Err(e) => report(&format!("setting not changed: {e:#}")),
+    }
+}
+
+/// A short desktop notification (not an error).
+fn info(msg: &str) {
+    println!("{msg}");
+    let _ = notify_rust::Notification::new().summary("vtt").body(msg).timeout(3000).show();
 }
 
 /// In toggle mode, stop when nobody spoke for this long (forgotten recording).

@@ -131,9 +131,11 @@ fn find_cut(buf: &[f32], min: f32, max: f32) -> Option<usize> {
     if rms.len() < first + SPAN {
         return None;
     }
-    // quietest 300 ms stretch after `min`
+    // quietest 300 ms stretch between `min` and `max` (a long kept recording is cut piece
+    // by piece, never searched as a whole)
+    let last = rms.len().min(((max * rate) as usize / WIN).max(first + SPAN));
     let (mut best_at, mut best) = (first, f32::MAX);
-    for start in first..=rms.len() - SPAN {
+    for start in first..=last - SPAN {
         let avg = rms[start..start + SPAN].iter().sum::<f32>() / SPAN as f32;
         if avg < best {
             best = avg;
@@ -463,5 +465,13 @@ mod tests {
         // no pause but at max: forced cut
         let talk: Vec<f32> = speech(46 * rate).collect();
         assert!(find_cut(&talk, 20.0, 45.0).is_some());
+        // a long recording: the cut stays within `max`, even if a later pause is quieter
+        let mut long: Vec<f32> = speech(30 * rate).collect();
+        long.extend(std::iter::repeat_n(0.002, rate / 2)); // a soft pause at 30 s
+        long.extend(speech(60 * rate));
+        long.extend(std::iter::repeat_n(0.0, rate)); // a silent pause at 90.5 s
+        long.extend(speech(10 * rate));
+        let cut = find_cut(&long, 20.0, 45.0).unwrap() as f32 / rate as f32;
+        assert!((30.0..30.6).contains(&cut), "cut at {cut}");
     }
 }
