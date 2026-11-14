@@ -1,5 +1,5 @@
-//! The Wortfluss icon, drawn in code (no image files to ship): a microphone with lines of
-//! text flowing out of it. Rendered smoothly at any size for the tray (all states), the
+//! The Wortfluss icon, drawn in code (no image files to ship): a microphone with the
+//! monogram WF beside it; the arms of the F are the lines of text flowing out of the mic. Rendered smoothly at any size for the tray (all states), the
 //! notifications and the desktop entry.
 
 /// What the tray icon shows.
@@ -26,6 +26,13 @@ fn rbox(x: f32, y: f32, cx: f32, cy: f32, hx: f32, hy: f32, r: f32) -> f32 {
     let qy = (y - cy).abs() - (hy - r);
     let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
     outside + qx.max(qy).min(0.0) - r
+}
+
+/// Distance to a line from (ax, ay) to (bx, by) with round ends, `w` thick.
+fn line(x: f32, y: f32, ax: f32, ay: f32, bx: f32, by: f32, w: f32) -> f32 {
+    let (px, py, dx, dy) = (x - ax, y - ay, bx - ax, by - ay);
+    let t = ((px * dx + py * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+    ((px - dx * t).powi(2) + (py - dy * t).powi(2)).sqrt() - w / 2.0
 }
 
 fn circle(x: f32, y: f32, cx: f32, cy: f32, r: f32) -> f32 {
@@ -62,11 +69,17 @@ fn shade(x: f32, y: f32, state: State, app: bool) -> Rgba {
     paint(rbox(x, y, 16.0, 45.0, 2.2, 6.0, 0.5), MIC);
     paint(rbox(x, y, 16.0, 52.0, 9.0, 2.4, 2.4), MIC);
 
-    // words flowing out
+    // monogram: W on top, F below; the F's arms are the text flowing out of the mic
     let flow = if app { MIC } else if state == State::Session { FLOW_SESSION } else { FLOW };
-    paint(rbox(x, y, 46.0, 13.0, 14.0, 3.2, 3.2), flow);
-    paint(rbox(x, y, 42.0, 26.0, 10.0, 3.2, 3.2), flow);
-    paint(rbox(x, y, 44.5, 39.0, 12.5, 3.2, 3.2), flow);
+    let w = 5.0;
+    let wd = [(33.5, 7.0), (39.5, 25.0), (46.5, 12.5), (53.5, 25.0), (59.5, 7.0)]
+        .windows(2)
+        .map(|p| line(x, y, p[0].0, p[0].1, p[1].0, p[1].1, w))
+        .fold(f32::MAX, f32::min);
+    paint(wd, if app { MIC } else { MIC });
+    paint(line(x, y, 36.0, 32.5, 36.0, 52.0, w), flow); // stem
+    paint(line(x, y, 36.0, 32.5, 60.0, 32.5, w), flow); // top arm (long line of text)
+    paint(line(x, y, 36.0, 42.0, 52.0, 42.0, w), flow); // middle arm (shorter line)
 
     // recording dot
     if !app && state != State::Ready {
@@ -159,7 +172,8 @@ pub fn write_ico(path: &std::path::Path) -> anyhow::Result<()> {
 
 /// The app icon as a PNG file (for notifications and the desktop entry); written once.
 pub fn app_icon_path() -> Option<std::path::PathBuf> {
-    let path = crate::platform::data_dir().ok()?.join("wortfluss.png");
+    // The file name carries the design version, so a new design replaces the old file.
+    let path = crate::platform::data_dir().ok()?.join("wortfluss-wf.png");
     if !path.exists() {
         std::fs::create_dir_all(path.parent()?).ok()?;
         write_png(&path, 256, State::Ready, true).ok()?;
