@@ -19,6 +19,8 @@ pub enum Event {
     Timeout(u64),
     /// Recording number N has been held long enough to be a dictation: play the start beep.
     BeepDue(u64),
+    /// Recording number N: time to check whether a piece is ready to send.
+    Tick(u64),
     /// config.toml changed.
     Reload,
 }

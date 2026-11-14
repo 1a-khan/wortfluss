@@ -3,19 +3,59 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
 use std::sync::{Arc, Mutex};
 
-const TARGET_RATE: u32 = 16_000; // Whisper works at 16 kHz mono; smaller upload = faster
+pub const TARGET_RATE: u32 = 16_000; // Whisper works at 16 kHz mono; smaller upload = faster
 
-/// An open microphone stream. Dropping it closes the mic.
+/// An open microphone stream. Audio is converted to 16 kHz mono as it arrives, so memory
+/// stays small (~2 MB per minute) and pieces can be taken off while recording continues.
+/// Dropping it closes the mic.
 pub struct Recorder {
     stream: cpal::Stream,
     samples: Arc<Mutex<Vec<f32>>>,
-    rate: u32,
-    channels: u16,
 }
 
-/// Finished recording, already mixed down to 16 kHz mono.
+/// A piece of recording, 16 kHz mono.
 pub struct Clip {
     pub samples: Vec<f32>,
+}
+
+/// Turns the device's stream (any rate, any channel count) into 16 kHz mono, chunk by
+/// chunk, carrying its position across callbacks.
+struct Converter {
+    channels: usize,
+    step: f64, // input samples per output sample
+    pos: f64,  // position of the next output sample, relative to `tail`
+    tail: Option<f32>,
+}
+
+impl Converter {
+    fn new(rate: u32, channels: u16) -> Self {
+        Self {
+            channels: channels.max(1) as usize,
+            step: rate as f64 / TARGET_RATE as f64,
+            pos: 0.0,
+            tail: None,
+        }
+    }
+
+    fn push(&mut self, interleaved: &[f32], out: &mut Vec<f32>) {
+        let mono = interleaved
+            .chunks(self.channels)
+            .map(|f| f.iter().sum::<f32>() / f.len() as f32);
+        let buf: Vec<f32> = self.tail.into_iter().chain(mono).collect();
+        if buf.len() < 2 {
+            self.tail = buf.last().copied();
+            return;
+        }
+        while self.pos + 1.0 < buf.len() as f64 {
+            let i = self.pos as usize;
+            let frac = (self.pos - i as f64) as f32;
+            out.push(buf[i] + (buf[i + 1] - buf[i]) * frac);
+            self.pos += self.step;
+        }
+        // keep the last input sample for interpolation across the next callback
+        self.pos -= (buf.len() - 1) as f64;
+        self.tail = buf.last().copied();
+    }
 }
 
 impl Recorder {
@@ -30,83 +70,101 @@ impl Recorder {
         let format = supported.sample_format();
         let config: cpal::StreamConfig = supported.into();
         let samples = Arc::new(Mutex::new(Vec::new()));
+        let conv = Converter::new(config.sample_rate.0, config.channels);
 
         let stream = match format {
-            SampleFormat::F32 => build::<f32>(&device, &config, samples.clone())?,
-            SampleFormat::I16 => build::<i16>(&device, &config, samples.clone())?,
-            SampleFormat::U16 => build::<u16>(&device, &config, samples.clone())?,
-            SampleFormat::I32 => build::<i32>(&device, &config, samples.clone())?,
-            SampleFormat::U8 => build::<u8>(&device, &config, samples.clone())?,
+            SampleFormat::F32 => build::<f32>(&device, &config, samples.clone(), conv)?,
+            SampleFormat::I16 => build::<i16>(&device, &config, samples.clone(), conv)?,
+            SampleFormat::U16 => build::<u16>(&device, &config, samples.clone(), conv)?,
+            SampleFormat::I32 => build::<i32>(&device, &config, samples.clone(), conv)?,
+            SampleFormat::U8 => build::<u8>(&device, &config, samples.clone(), conv)?,
             other => bail!("unsupported microphone sample format {other:?}"),
         };
         stream.play().context("could not start microphone")?;
+        Ok(Self { stream, samples })
+    }
 
-        Ok(Self {
-            stream,
-            samples,
-            rate: config.sample_rate.0,
-            channels: config.channels,
+    /// Seconds recorded and not yet taken.
+    #[allow(dead_code)]
+    pub fn buffered_seconds(&self) -> f32 {
+        self.samples.lock().unwrap().len() as f32 / TARGET_RATE as f32
+    }
+
+    /// Take a piece off the front while recording continues: once at least `min` seconds
+    /// are buffered, cut at the quietest moment (a pause between words or sentences)
+    /// after `min`; if there is no real pause by `max` seconds, cut at the quietest
+    /// moment anyway. None = not yet.
+    pub fn take_piece(&self, min: f32, max: f32) -> Option<Clip> {
+        let mut buf = self.samples.lock().unwrap();
+        let cut = find_cut(&buf, min, max)?;
+        Some(Clip {
+            samples: buf.drain(..cut).collect(),
         })
     }
 
     pub fn stop(self) -> Clip {
         drop(self.stream);
-        let raw = std::mem::take(&mut *self.samples.lock().unwrap());
-        let mono = downmix(&raw, self.channels);
         Clip {
-            samples: resample(&mono, self.rate, TARGET_RATE),
+            samples: std::mem::take(&mut *self.samples.lock().unwrap()),
         }
     }
+}
+
+/// Where to cut a piece (sample index), see `take_piece`.
+fn find_cut(buf: &[f32], min: f32, max: f32) -> Option<usize> {
+    const WIN: usize = (TARGET_RATE / 50) as usize; // 20 ms
+    const SPAN: usize = 15; // 15 windows = 300 ms of quiet
+    let rate = TARGET_RATE as f32;
+    if (buf.len() as f32) < min * rate {
+        return None;
+    }
+    let rms: Vec<f32> = buf
+        .chunks(WIN)
+        .map(|w| (w.iter().map(|s| s * s).sum::<f32>() / w.len() as f32).sqrt())
+        .collect();
+    let loudest = rms.iter().copied().fold(0.0f32, f32::max);
+    let first = (min * rate) as usize / WIN;
+    if rms.len() < first + SPAN {
+        return None;
+    }
+    // quietest 300 ms stretch after `min`
+    let (mut best_at, mut best) = (first, f32::MAX);
+    for start in first..=rms.len() - SPAN {
+        let avg = rms[start..start + SPAN].iter().sum::<f32>() / SPAN as f32;
+        if avg < best {
+            best = avg;
+            best_at = start;
+        }
+    }
+    let is_pause = best < (loudest * 0.12).max(0.003);
+    let forced = buf.len() as f32 >= max * rate;
+    (is_pause || forced).then_some((best_at + SPAN / 2) * WIN)
 }
 
 fn build<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     buf: Arc<Mutex<Vec<f32>>>,
+    mut conv: Converter,
 ) -> Result<cpal::Stream>
 where
     T: SizedSample,
     f32: FromSample<T>,
 {
+    let mut scratch: Vec<f32> = Vec::new();
     let stream = device.build_input_stream(
         config,
         move |data: &[T], _: &cpal::InputCallbackInfo| {
+            scratch.clear();
+            scratch.extend(data.iter().map(|s| s.to_sample::<f32>()));
             if let Ok(mut b) = buf.lock() {
-                b.extend(data.iter().map(|s| s.to_sample::<f32>()));
+                conv.push(&scratch, &mut b);
             }
         },
         |err| eprintln!("microphone error: {err}"),
         None,
     )?;
     Ok(stream)
-}
-
-fn downmix(raw: &[f32], channels: u16) -> Vec<f32> {
-    let ch = channels.max(1) as usize;
-    if ch == 1 {
-        return raw.to_vec();
-    }
-    raw.chunks(ch)
-        .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-        .collect()
-}
-
-fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
-    if from == to || input.is_empty() {
-        return input.to_vec();
-    }
-    let out_len = (input.len() as u64 * to as u64 / from as u64) as usize;
-    let step = from as f64 / to as f64;
-    (0..out_len)
-        .map(|i| {
-            let pos = i as f64 * step;
-            let idx = pos as usize;
-            let frac = (pos - idx as f64) as f32;
-            let a = input[idx.min(input.len() - 1)];
-            let b = input[(idx + 1).min(input.len() - 1)];
-            a + (b - a) * frac
-        })
-        .collect()
 }
 
 impl Clip {
@@ -116,6 +174,87 @@ impl Clip {
 
     pub fn peak(&self) -> f32 {
         self.samples.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+    }
+
+    /// Loudness of each 20 ms window.
+    fn window_rms(&self) -> Vec<f32> {
+        self.samples
+            .chunks((TARGET_RATE / 50) as usize)
+            .map(|w| (w.iter().map(|s| s * s).sum::<f32>() / w.len() as f32).sqrt())
+            .collect()
+    }
+
+    /// Level that separates sound from the room's background noise, or None if the
+    /// clip has no clear sound at all (flat noise: fan, hum, silence).
+    fn sound_threshold(rms: &[f32]) -> Option<f32> {
+        if rms.is_empty() {
+            return None;
+        }
+        let mut sorted = rms.to_vec();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        let floor = sorted[sorted.len() / 10]; // background noise level
+        let top = sorted[sorted.len() * 95 / 100];
+        if top < (floor * 3.0).max(0.008) {
+            return None; // nothing stands out from the background
+        }
+        Some((floor * 2.5).max(top * 0.15).max(0.005))
+    }
+
+    /// Seconds that sound like speech: stretches of at least 100 ms clearly louder than
+    /// the background. Clicks, taps and a door (a few ms) don't count; flat noise doesn't
+    /// either.
+    pub fn speech_seconds(&self) -> f32 {
+        let rms = self.window_rms();
+        let Some(thr) = Self::sound_threshold(&rms) else { return 0.0 };
+        let mut total = 0;
+        let mut run = 0;
+        for r in rms.iter().chain(std::iter::once(&0.0)) {
+            if *r > thr {
+                run += 1;
+            } else {
+                if run >= 5 {
+                    total += run;
+                }
+                run = 0;
+            }
+        }
+        total as f32 * 0.02
+    }
+
+    /// Is there enough speech to be worth sending?
+    pub fn has_speech(&self) -> bool {
+        self.speech_seconds() >= 0.4
+    }
+
+    /// Shorten pauses longer than 1 s inside the clip to 0.6 s: nobody pays for silence,
+    /// and Whisper has less silence to invent text from.
+    pub fn shorten_pauses(&mut self) {
+        const WIN: usize = (TARGET_RATE / 50) as usize;
+        const KEEP: usize = 15; // windows kept on each side of a pause (0.3 s)
+        let rms = self.window_rms();
+        let Some(thr) = Self::sound_threshold(&rms) else { return };
+        let mut out = Vec::with_capacity(self.samples.len());
+        let mut i = 0;
+        while i < rms.len() {
+            if rms[i] > thr {
+                let end = ((i + 1) * WIN).min(self.samples.len());
+                out.extend_from_slice(&self.samples[i * WIN..end]);
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < rms.len() && rms[i] <= thr {
+                i += 1;
+            }
+            let (a, b) = (start * WIN, (i * WIN).min(self.samples.len()));
+            if i - start > 50 {
+                out.extend_from_slice(&self.samples[a..a + KEEP * WIN]);
+                out.extend_from_slice(&self.samples[b - KEEP * WIN..b]);
+            } else {
+                out.extend_from_slice(&self.samples[a..b]);
+            }
+        }
+        self.samples = out;
     }
 
     /// Cut the quiet parts before the first and after the last loud moment, keeping a
@@ -222,4 +361,103 @@ where
         None,
     )?;
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converter_keeps_length_and_tone() {
+        // 1 s of 48 kHz stereo 440 Hz, fed in uneven callback sizes
+        let input: Vec<f32> = (0..48_000)
+            .flat_map(|i| {
+                let v = (i as f32 / 48_000.0 * 440.0 * std::f32::consts::TAU).sin() * 0.5;
+                [v, v]
+            })
+            .collect();
+        let mut conv = Converter::new(48_000, 2);
+        let mut out = Vec::new();
+        for chunk in input.chunks(2 * 441) {
+            conv.push(chunk, &mut out);
+        }
+        assert!((out.len() as i64 - 16_000).abs() <= 2, "{}", out.len());
+        let expect = |i: usize| (i as f32 / 16_000.0 * 440.0 * std::f32::consts::TAU).sin() * 0.5;
+        let worst = (0..out.len()).map(|i| (out[i] - expect(i)).abs()).fold(0.0, f32::max);
+        assert!(worst < 0.02, "max error {worst}");
+    }
+
+    fn noise(n: usize, amp: f32) -> impl Iterator<Item = f32> {
+        let mut x: u32 = 12345;
+        (0..n).map(move |_| {
+            x = x.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            ((x >> 16) as f32 / 65_535.0 - 0.5) * 2.0 * amp
+        })
+    }
+
+    #[test]
+    fn speech_detector() {
+        let rate = TARGET_RATE as usize;
+        let tone = |n: usize| (0..n).map(|i| (i as f32 / 16_000.0 * 220.0 * std::f32::consts::TAU).sin() * 0.2);
+        // fan noise only: not speech
+        let fan = Clip { samples: noise(20 * rate, 0.02).collect() };
+        assert_eq!(fan.speech_seconds(), 0.0);
+        assert!(!fan.has_speech());
+        // silence only
+        assert!(!Clip { samples: vec![0.0; 20 * rate] }.has_speech());
+        // noise with 10 key clicks of 20 ms: not speech
+        let mut clicks: Vec<f32> = noise(20 * rate, 0.005).collect();
+        for k in 0..10 {
+            let at = k * 2 * rate;
+            for (j, v) in tone(rate / 50).enumerate() {
+                clicks[at + j] = v * 3.0;
+            }
+        }
+        assert!(!Clip { samples: clicks }.has_speech());
+        // noise with 2 s of "voice": speech
+        let mut talk: Vec<f32> = noise(20 * rate, 0.005).collect();
+        for (j, v) in tone(2 * rate).enumerate() {
+            talk[5 * rate + j] += v;
+        }
+        let c = Clip { samples: talk };
+        assert!(c.has_speech());
+        assert!((1.8..2.2).contains(&c.speech_seconds()), "{}", c.speech_seconds());
+    }
+
+    #[test]
+    fn long_pauses_are_shortened() {
+        let rate = TARGET_RATE as usize;
+        let tone = |n: usize| (0..n).map(|i| (i as f32 / 16_000.0 * 220.0 * std::f32::consts::TAU).sin() * 0.2);
+        // 2 s voice, 8 s pause, 2 s voice, 0.5 s pause, 2 s voice
+        let mut s: Vec<f32> = tone(2 * rate).collect();
+        s.extend(noise(8 * rate, 0.003));
+        s.extend(tone(2 * rate));
+        s.extend(noise(rate / 2, 0.003));
+        s.extend(tone(2 * rate));
+        let mut c = Clip { samples: s };
+        c.shorten_pauses();
+        let secs = c.seconds();
+        // 6 s voice + 0.6 s (shortened) + 0.5 s (short pause kept)
+        assert!((6.9..7.3).contains(&secs), "{secs}");
+    }
+
+    #[test]
+    fn cuts_at_the_pause() {
+        let rate = TARGET_RATE as usize;
+        let speech = |n: usize| (0..n).map(|i| ((i % 40) as f32 / 40.0 - 0.5) * 0.6);
+        // 25 s speech, 0.6 s silence, 10 s speech
+        let mut buf: Vec<f32> = speech(25 * rate).collect();
+        buf.extend(std::iter::repeat_n(0.0, rate * 6 / 10));
+        buf.extend(speech(10 * rate));
+        let cut = find_cut(&buf, 20.0, 45.0).unwrap() as f32 / rate as f32;
+        assert!((25.0..25.6).contains(&cut), "cut at {cut}");
+        // too short yet
+        assert!(find_cut(&buf[..15 * rate], 20.0, 45.0).is_none());
+        // no pause and below max: wait
+        let talk: Vec<f32> = speech(30 * rate).collect();
+        assert!(find_cut(&talk, 20.0, 45.0).is_none());
+        // no pause but at max: forced cut
+        let talk: Vec<f32> = speech(46 * rate).collect();
+        assert!(find_cut(&talk, 20.0, 45.0).is_some());
+    }
 }

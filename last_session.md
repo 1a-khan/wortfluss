@@ -13,3 +13,5 @@ Next: user tests OpenRouter key; Windows port.
 - API keys: encrypted in ~/.config/vtt/secrets.env (ChaCha20-Poly1305), master key in OS keyring (keyring crate), machine-id fallback. User's Groq key migrated.
 - Added built-in guide: vtt help [models|correction|hotkey|layout|security|costs|files|trouble] (src/help.rs; model tables generated from providers.rs).
 - Added settings menu (vtt setup on existing install), vtt set <setting>, vtt phrases add/remove/clear; phrases also fed to correction (OpenRouter/Mistral ignore prompt). User now on OpenRouter + Claude Haiku correction.
+- Long dictation: pieces (~30 s, cut at pauses) sent while recording, typed in order; live 16 kHz conversion (memory fix); speech detector skips silent pieces, shortens pauses; toggle auto-stop after 60 s silence; failed pieces saved, vtt retry; max recording up to 1 h.
+- Mic selection: vtt mics, vtt set mic (3 s level test), mic in setup step 7; lists PipeWire/Pulse sources via pulseaudio crate, records via PIPEWIRE_NODE/PULSE_SOURCE (verified with pw-dump links).

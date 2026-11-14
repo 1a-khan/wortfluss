@@ -37,11 +37,15 @@ pub struct Config {
     /// Correct spelling, grammar and punctuation with a text model before typing.
     pub correct_text: bool,
     pub hotkey: String,
+    /// Microphone (sound-server source name). Empty = system default.
+    pub mic: String,
     pub mode: Mode,
     pub sounds: bool,
     pub keyboard_layout: String,
     pub keyboard_variant: String,
     pub max_seconds: u64,
+    /// Long recordings are sent in pieces of about this many seconds, cut at a pause.
+    pub piece_seconds: u64,
     pub add_trailing_space: bool,
     pub key_delay_ms: u64,
 
@@ -69,11 +73,13 @@ impl Default for Config {
             prompt: String::new(),
             correct_text: false,
             hotkey: "KEY_RIGHTCTRL".into(),
+            mic: String::new(),
             mode: Mode::Hold,
             sounds: true,
             keyboard_layout: "auto".into(),
             keyboard_variant: String::new(),
             max_seconds: 120,
+            piece_seconds: 30,
             add_trailing_space: true,
             key_delay_ms: 3,
             groq: ProviderSettings::default(),
@@ -322,6 +328,10 @@ correct_text = {correct}
 # Key that starts dictation (Linux key name). `vtt setup` lets you just press it.
 hotkey = {hotkey}
 
+# Microphone to record from. Empty = the system default (Settings > Sound).
+# Easiest: `vtt set mic`. `vtt mics` lists the names.
+mic = {mic}
+
 # "hold" = hold the key while you speak; "toggle" = press to start, press again to stop
 mode = "{mode}"
 
@@ -333,8 +343,13 @@ sounds = {sounds}
 keyboard_layout = {layout}
 keyboard_variant = {variant}
 
-# Stop recording automatically after this many seconds (stuck key, forgotten toggle)
+# Stop recording automatically after this many seconds (stuck key, forgotten toggle).
+# Toggle mode also stops by itself after 60 s without speech.
 max_seconds = {max_seconds}
+
+# While you speak, the recording is sent in pieces of about this many seconds, cut at
+# a pause, so text appears while you keep talking. Pieces without speech are not sent.
+piece_seconds = {piece}
 
 # Add a space after each dictation so consecutive ones don't run together
 add_trailing_space = {space}
@@ -347,10 +362,12 @@ key_delay_ms = {delay}
         prompt = q(&c.prompt),
         correct = c.correct_text,
         hotkey = q(&c.hotkey),
+        mic = q(&c.mic),
         sounds = c.sounds,
         layout = q(&c.keyboard_layout),
         variant = q(&c.keyboard_variant),
         max_seconds = c.max_seconds,
+        piece = c.piece_seconds,
         space = c.add_trailing_space,
         delay = c.key_delay_ms,
     );

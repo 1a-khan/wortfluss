@@ -2,7 +2,7 @@
 //! Setup can be run again at any time; current values are preselected, so Enter keeps them.
 
 use crate::config::{self, Config, Mode};
-use crate::{audio, correct, hotkey, layout, platform, providers, secrets, stt, typer};
+use crate::{audio, correct, hotkey, layout, mics, platform, providers, secrets, stt, typer};
 use anyhow::{bail, Result};
 use crate::stt::ModelEntry;
 use dialoguer::{theme::ColorfulTheme, Confirm, FuzzySelect, Input, MultiSelect, Password, Select};
@@ -73,6 +73,10 @@ fn system_checks() -> bool {
 
 /// `vtt check`: everything vtt needs, with a fix for whatever is missing.
 pub fn check() -> Result<()> {
+    if let Ok(cfg) = config::load() {
+        mics::select(&cfg.mic);
+        println!("Microphone: {}", mics::describe(&cfg.mic));
+    }
     println!("Computer:");
     system_checks();
 
@@ -139,6 +143,7 @@ pub enum Setting {
     Phrases,
     Language,
     Hotkey,
+    Mic,
     Mode,
     Sounds,
     Layout,
@@ -155,11 +160,12 @@ const SETTINGS: &[(Setting, &str, &[&str], &str)] = &[
     (Setting::Phrases, "phrases", &["words", "names", "prompt"], "Phrases (names, words to spell right)"),
     (Setting::Language, "language", &["lang"], "Language"),
     (Setting::Hotkey, "hotkey", &["shortcut", "button"], "Dictation key"),
+    (Setting::Mic, "mic", &["microphone", "input", "mics"], "Microphone"),
     (Setting::Mode, "mode", &["long", "toggle", "hold", "max-seconds"], "Hold/toggle & long dictations"),
     (Setting::Sounds, "sounds", &["beep", "beeps"], "Beeps"),
     (Setting::Layout, "layout", &["keyboard"], "Keyboard layout"),
     (Setting::Autostart, "autostart", &["login", "startup"], "Start at login"),
-    (Setting::Advanced, "advanced", &["spacing", "typing-speed"], "Advanced (spacing, typing speed)"),
+    (Setting::Advanced, "advanced", &["spacing", "typing-speed", "pieces"], "Advanced (spacing, typing speed, pieces)"),
 ];
 
 pub fn setting_names() -> String {
@@ -193,6 +199,7 @@ fn current_value(cfg: &Config, s: Setting) -> String {
             if cfg.language.is_empty() { "automatic".into() } else { cfg.language.clone() }
         }
         Setting::Hotkey => hotkey::pretty(&cfg.hotkey),
+        Setting::Mic => mics::describe(&cfg.mic),
         Setting::Mode => format!(
             "{}, max {}",
             if cfg.mode == Mode::Hold { "hold" } else { "toggle" },
@@ -204,9 +211,10 @@ fn current_value(cfg: &Config, s: Setting) -> String {
         }
         Setting::Autostart => if platform::autostart_enabled() { "on".into() } else { "off".into() },
         Setting::Advanced => format!(
-            "space after text {}, {} ms per key",
+            "space after text {}, {} ms per key, pieces ~{} s",
             if cfg.add_trailing_space { "on" } else { "off" },
-            cfg.key_delay_ms
+            cfg.key_delay_ms,
+            cfg.piece_seconds
         ),
     }
 }
@@ -320,6 +328,7 @@ fn change(t: &ColorfulTheme, cfg: &mut Config, s: Setting) -> Result<()> {
         Setting::Phrases => ask_phrases(t, cfg)?,
         Setting::Language => ask_language(t, cfg)?,
         Setting::Hotkey => ask_hotkey(t, cfg, true)?,
+        Setting::Mic => ask_mic(t, cfg, true)?,
         Setting::Mode => ask_mode(t, cfg)?,
         Setting::Sounds => {
             cfg.sounds = Confirm::with_theme(t)
@@ -401,6 +410,7 @@ fn full(in_foreground: bool) -> Result<()> {
     let t = ColorfulTheme::default();
     let first_time = !config::exists();
     let mut cfg = load_for_setup();
+    mics::select(&cfg.mic);
 
     println!("\nvtt setup: Enter keeps the highlighted choice, arrow keys move, Ctrl+C cancels.");
     println!("\nChecking this computer:");
@@ -426,7 +436,10 @@ fn full(in_foreground: bool) -> Result<()> {
     heading(6, "Phrases: names and words to spell right (optional)");
     ask_phrases(&t, &mut cfg)?;
 
-    heading(7, "Dictation key");
+    heading(7, "Microphone");
+    ask_mic(&t, &mut cfg, false)?;
+
+    heading(8, "Dictation key");
     let want_change = first_time && hotkey::parse(&cfg.hotkey).is_none();
     ask_hotkey(&t, &mut cfg, want_change)?;
     ask_mode(&t, &mut cfg)?;
@@ -435,17 +448,17 @@ fn full(in_foreground: bool) -> Result<()> {
         .default(cfg.sounds)
         .interact()?;
 
-    heading(8, "Keyboard layout for typing");
+    heading(9, "Keyboard layout for typing");
     ask_layout(&t, &mut cfg)?;
 
-    heading(9, "Start automatically");
+    heading(10, "Start automatically");
     let autostart = Confirm::with_theme(&t)
         .with_prompt("Start vtt automatically when you log in? (recommended)")
         .default(true)
         .interact()?;
 
     if Confirm::with_theme(&t)
-        .with_prompt("Change advanced settings (spacing, typing speed)?")
+        .with_prompt("Change advanced settings (spacing, typing speed, piece size)?")
         .default(false)
         .interact()?
     {
@@ -453,7 +466,7 @@ fn full(in_foreground: bool) -> Result<()> {
     }
 
     println!("\n── Summary ──");
-    for s in [Setting::Service, Setting::Model, Setting::Correction, Setting::Phrases, Setting::Language, Setting::Hotkey, Setting::Mode, Setting::Layout] {
+    for s in [Setting::Service, Setting::Model, Setting::Correction, Setting::Phrases, Setting::Language, Setting::Mic, Setting::Hotkey, Setting::Mode, Setting::Layout] {
         let label = SETTINGS.iter().find(|x| x.0 == s).map(|x| x.3).unwrap_or("");
         println!("  {label:<38} {}", current_value(&cfg, s));
     }
@@ -497,6 +510,78 @@ fn full(in_foreground: bool) -> Result<()> {
     Ok(())
 }
 
+/// Pick the microphone and try it. `always_ask`: also when there is only one.
+fn ask_mic(t: &ColorfulTheme, cfg: &mut Config, always_ask: bool) -> Result<()> {
+    let list = match mics::list() {
+        Ok(l) => l,
+        Err(e) => {
+            println!("  Can't list microphones ({e:#}); the system default is used.");
+            return Ok(());
+        }
+    };
+    let default_desc = list.iter().find(|m| m.is_default).map(|m| m.description.clone()).unwrap_or_default();
+    if list.len() <= 1 && !always_ask {
+        println!("  Using: {}", if default_desc.is_empty() { "system default".to_string() } else { default_desc });
+        cfg.mic.clear();
+        return Ok(());
+    }
+    loop {
+        let mut labels = vec![format!(
+            "System default (recommended): follows Settings > Sound{}",
+            if default_desc.is_empty() { String::new() } else { format!(", now {default_desc}") }
+        )];
+        labels.extend(list.iter().map(|m| {
+            format!("{}{}", m.description, if m.muted { "  [muted]" } else { "" })
+        }));
+        let current = list.iter().position(|m| m.name == cfg.mic).map_or(0, |i| i + 1);
+        let i = Select::with_theme(t)
+            .with_prompt("Which microphone should vtt use?")
+            .items(&labels)
+            .default(current)
+            .interact()?;
+        let chosen = if i == 0 { String::new() } else { list[i - 1].name.clone() };
+        if i > 0 && list[i - 1].muted {
+            println!("  This microphone is muted in the system sound settings.");
+        }
+
+        // Try it before keeping it.
+        mics::select(&chosen);
+        println!("  Say something for 3 seconds...");
+        let result = audio::Recorder::start().map(|r| {
+            std::thread::sleep(Duration::from_secs(3));
+            r.stop()
+        });
+        match result {
+            Ok(clip) => {
+                let level = (clip.peak() * 100.0).round() as usize;
+                let bar: String = "█".repeat((level / 5).min(20)) + &"░".repeat(20 - (level / 5).min(20));
+                println!(
+                    "  Level {bar} {level}%  {}",
+                    if clip.has_speech() {
+                        "speech heard".to_string()
+                    } else if clip.peak() < 0.01 {
+                        "silent: muted or wrong microphone?".to_string()
+                    } else {
+                        "no clear speech".to_string()
+                    }
+                );
+            }
+            Err(e) => println!("  Recording failed: {e:#}"),
+        }
+        match Select::with_theme(t)
+            .items(&["Use this microphone", "Choose another one / test again"])
+            .default(0)
+            .interact()?
+        {
+            0 => {
+                cfg.mic = chosen;
+                return Ok(());
+            }
+            _ => continue,
+        }
+    }
+}
+
 fn ask_mode(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
     let modes = [
         "Hold to talk: hold the key while you speak, let go to type (best for short texts)",
@@ -511,20 +596,23 @@ fn ask_mode(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
         1 => Mode::Toggle,
         _ => Mode::Hold,
     };
-    println!("  The whole recording is transcribed after you stop, then typed in one go.");
-    println!("  Very long recordings take a few seconds longer; the limit is about 13 minutes.");
-    let options: [(u64, &str); 5] = [
+    println!("  Long dictations are sent in pieces of ~{} s while you speak, so the text", cfg.piece_seconds);
+    println!("  appears as you go. Pauses and silence are never sent; toggle mode stops by");
+    println!("  itself after 60 s without speech.");
+    let options: [(u64, &str); 7] = [
         (60, "1 minute"),
         (120, "2 minutes (default)"),
-        (300, "5 minutes (good for toggle mode)"),
+        (300, "5 minutes"),
         (600, "10 minutes"),
+        (1800, "30 minutes (good for toggle mode)"),
+        (3600, "1 hour"),
         (0, "Other"),
     ];
     let labels: Vec<&str> = options.iter().map(|o| o.1).collect();
     let default = options
         .iter()
         .position(|o| o.0 == cfg.max_seconds)
-        .unwrap_or(if cfg.mode == Mode::Toggle { 2 } else { 1 });
+        .unwrap_or(if cfg.mode == Mode::Toggle { 4 } else { 1 });
     let i = Select::with_theme(t)
         .with_prompt("Longest recording before vtt stops it automatically")
         .items(&labels)
@@ -534,9 +622,9 @@ fn ask_mode(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
         options[i].0
     } else {
         Input::with_theme(t)
-            .with_prompt("Seconds (10 to 780)")
+            .with_prompt("Seconds (10 to 7200)")
             .default(cfg.max_seconds)
-            .validate_with(|v: &u64| if (10..=780).contains(v) { Ok(()) } else { Err("between 10 and 780") })
+            .validate_with(|v: &u64| if (10..=7200).contains(v) { Ok(()) } else { Err("between 10 and 7200") })
             .interact_text()?
     };
     Ok(())
@@ -550,6 +638,11 @@ fn ask_advanced(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
     cfg.key_delay_ms = Input::with_theme(t)
         .with_prompt("Milliseconds between typed keys (raise if an app drops letters)")
         .default(cfg.key_delay_ms)
+        .interact_text()?;
+    cfg.piece_seconds = Input::with_theme(t)
+        .with_prompt("Send long dictations in pieces of about how many seconds? (10-120)")
+        .default(cfg.piece_seconds)
+        .validate_with(|v: &u64| if (10..=120).contains(v) { Ok(()) } else { Err("between 10 and 120") })
         .interact_text()?;
     Ok(())
 }

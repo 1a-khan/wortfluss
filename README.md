@@ -21,6 +21,8 @@ within a few seconds.
 | `vtt setup` | first time: guided setup; afterwards: menu to change one setting at a time |
 | `vtt set <setting>` | change one thing: service, model, key, correction, phrases, language, hotkey, mode, ... |
 | `vtt phrases [add\|remove\|clear]` | names and words to spell right |
+| `vtt mics` / `vtt set mic` | list microphones / choose one (with a 3-second test) |
+| `vtt retry` | transcribe pieces that failed earlier (e.g. no internet) |
 | `vtt help [topic]` | built-in guide: models, correction, hotkey, layout, security, costs, files, trouble |
 | `vtt check` | tests everything (keyboard access, mic, key, model, autostart) and says what to fix |
 | `vtt start` / `vtt stop` | start in the background / stop |
@@ -160,6 +162,7 @@ The code is split so a Windows build replaces only the OS-specific parts:
 | `hotkey.rs` | evdev (`/dev/input`) | `SetWindowsHookEx(WH_KEYBOARD_LL)`, no permissions needed |
 | `typer.rs` + `layout.rs` | uinput + xkbcommon key mapping | `SendInput` with `KEYEVENTF_UNICODE`: any character, any layout, no mapping needed |
 | `audio.rs` | cpal (ALSA) | cpal (WASAPI), unchanged |
+| `mics.rs` | sound-server source list (PulseAudio protocol), `PIPEWIRE_NODE` | cpal/WASAPI device list with names |
 | `setup.rs`, `config.rs`, `providers.rs`, `stt.rs`, `usage.rs` | shared | shared |
 
 For clients, Windows needs none of the permission steps above. A single `vtt.exe` plus

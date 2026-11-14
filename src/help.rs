@@ -15,12 +15,14 @@ GETTING STARTED
 COMMANDS
     vtt setup        menu of all settings with current values; change one at a time
     vtt set <what>   change one thing directly: service, model, key, correction, phrases,
-                     language, hotkey, mode, sounds, layout, autostart, advanced
+                     language, mic, hotkey, mode, sounds, layout, autostart, advanced
     vtt phrases      list names/words to spell right; vtt phrases add \"A, B\" / remove \"A\"
     vtt check        test everything vtt needs and show how to fix problems
     vtt start        start in the background        vtt stop    stop it
     vtt              run in this terminal and show what is typed (good for testing)
     vtt usage        audio sent today / this month / all time, with cost
+    vtt retry        transcribe pieces that failed earlier (e.g. no internet)
+    vtt mics         list the microphones; choose one with `vtt set mic`
     vtt autostart on|off      start at login or not
     vtt test-type    type a test sentence after 3 seconds
     vtt test-mic     record 4 seconds to vtt-test.wav
@@ -33,6 +35,7 @@ HELP TOPICS
     vtt help phrases      names and words that must be spelled right
     vtt help switching    changing service or model
     vtt help hotkey       choosing the dictation key, hold vs toggle
+    vtt help mic          choosing the microphone
     vtt help layout       keyboard layouts and special characters
     vtt help security     how API keys are stored and protected
     vtt help costs        what you pay and how to check it
@@ -71,8 +74,18 @@ Hold mode (default): hold the key while speaking, let go to type. Using the key 
 shortcut (Ctrl+C, Ctrl+V ...) cancels silently, so Right Ctrl keeps working as Ctrl.
 
 Toggle mode: press once to start, again to stop. Good for long dictations.
-Switch with `vtt set mode`, which also sets the longest recording (1, 2, 5 or 10
-minutes, up to ~13). The recording is transcribed after you stop and typed in one go.
+Switch with `vtt set mode`, which also sets the longest recording (1 min to 1 hour).
+
+LONG DICTATIONS: while you speak, vtt sends the recording in pieces of about 30 s,
+cut at a natural pause, and types each piece's text while you keep talking. In hold
+mode the text is typed once you release the key (a held Ctrl would turn letters into
+shortcuts). Piece size: `vtt set advanced`.
+
+SILENCE: pieces without speech (pauses, breathing, fan or street noise, keyboard
+clicks) are never sent, and pauses longer than 1 s inside a piece are shortened, so
+you don't pay for silence. Toggle mode stops by itself after 60 s without speech.
+
+If the internet drops, unsent pieces are saved; `vtt retry` transcribes them later.
 
 Beeps: high beep = recording, low beep = sent (`vtt set sounds`).
 ";
@@ -146,6 +159,21 @@ A running vtt switches within a few seconds; no restart needed.
 See `vtt help models` for the recommended models and prices.
 ";
 
+const MIC: &str = "\
+MICROPHONE
+
+    vtt mics        list the microphones the system knows (with readable names)
+    vtt set mic     choose one; vtt records 3 s so you can see it hears you
+
+Default: the system default microphone (Settings > Sound), so plugging in a headset
+and selecting it there also switches vtt. Choose a specific microphone to always use
+it, e.g. a USB or Bluetooth headset. If that microphone is not connected, the default
+one is used, and `vtt check` tells you.
+
+Silent recordings: check the microphone isn't muted (`vtt mics` shows [muted]) and
+try `vtt test-mic`.
+";
+
 const COSTS: &str = "\
 COSTS
 
@@ -157,8 +185,8 @@ rate limits (you then get a \"rate limit\" notification; wait a bit).
                  OpenRouter reports the exact cost of each request; for the others vtt
                  estimates from list prices. Groq counts each request as at least 10 s.
 
-Very short presses (< 0.4 s) and silence are never sent. Silence at the start and end
-is cut off before sending. Official numbers are in your provider's dashboard.
+Very short presses (< 0.4 s) and pieces without speech are never sent. Silence at the
+start and end is cut off and long pauses inside are shortened before sending. Official numbers are in your provider's dashboard.
 See `vtt help models` for prices per model.
 ";
 
@@ -265,13 +293,14 @@ pub fn show(topic: Option<&str>) -> Result<()> {
             "correction" | "correct" | "spelling" | "grammar" => correction(),
             "hotkey" | "key" | "keys" | "mode" => HOTKEY.into(),
             "layout" | "keyboard" => LAYOUT.into(),
+            "mic" | "mics" | "microphone" | "input" => MIC.into(),
             "security" | "secrets" | "api-key" | "apikey" | "encryption" => SECURITY.into(),
             "phrases" | "phrase" | "words" | "names" => PHRASES.into(),
             "switching" | "switch" | "change" | "set" => SWITCHING.into(),
             "costs" | "cost" | "price" | "prices" | "billing" | "usage" => COSTS.into(),
             "files" | "file" | "config" => files(),
             "trouble" | "troubleshooting" | "problems" | "faq" => TROUBLE.into(),
-            other => bail!("no help topic `{other}`. Topics: models, correction, phrases, switching, hotkey, layout, security, costs, files, trouble"),
+            other => bail!("no help topic `{other}`. Topics: models, correction, phrases, switching, hotkey, mic, layout, security, costs, files, trouble"),
         },
     };
     print!("{text}");
