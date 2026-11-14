@@ -16,6 +16,8 @@ pub type Handle = ksni::blocking::Handle<VttTray>;
 
 pub struct VttTray {
     tx: Sender<Event>,
+    /// The Wortfluss icon per state, drawn once at several sizes.
+    icons: [Vec<ksni::Icon>; 3],
     pub dictating: bool,
     pub session: bool,
     hold: bool,
@@ -36,8 +38,19 @@ pub struct VttTray {
 /// Show the tray icon. None if the desktop has no tray (vtt works without it).
 pub fn start(cfg: &Config, tx: Sender<Event>) -> Option<Handle> {
     let combo = |s: &str| hotkey::Combo::parse(s).map(|c| c.text()).unwrap_or_default();
+    let draw = |st| {
+        [22u32, 32, 48, 64]
+            .iter()
+            .map(|&s| ksni::Icon { width: s as i32, height: s as i32, data: crate::icon::argb(s, st) })
+            .collect::<Vec<_>>()
+    };
     let tray = VttTray {
         tx,
+        icons: [
+            draw(crate::icon::State::Ready),
+            draw(crate::icon::State::Dictating),
+            draw(crate::icon::State::Session),
+        ],
         dictating: false,
         session: crate::session::is_running(),
         hold: cfg.mode == Mode::Hold,
@@ -113,20 +126,17 @@ impl ksni::Tray for VttTray {
     }
 
     fn title(&self) -> String {
-        "vtt voice to text".into()
+        "Wortfluss".into()
     }
 
-    fn icon_name(&self) -> String {
-        if self.session || self.dictating {
-            "media-record-symbolic".into()
-        } else {
-            "audio-input-microphone-symbolic".into()
-        }
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        let i = if self.session { 2 } else if self.dictating { 1 } else { 0 };
+        self.icons[i].clone()
     }
 
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
-            title: "vtt".into(),
+            title: "Wortfluss".into(),
             description: self.status(),
             ..Default::default()
         }
@@ -216,7 +226,7 @@ impl ksni::Tray for VttTray {
         menu.push(check("Beeps", self.sounds, Action::ToggleSounds));
         menu.push(MenuItem::Separator);
         menu.push(item(with_key("All settings...", &self.shortcut_settings), Action::OpenSettings));
-        menu.push(item("Quit vtt", Action::Quit));
+        menu.push(item("Quit Wortfluss", Action::Quit));
         menu
     }
 }

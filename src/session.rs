@@ -58,6 +58,10 @@ struct Options {
     dir: Option<PathBuf>,
     /// Keep the audio (overrides the setting for this session).
     keep_audio: bool,
+    /// Restart after a crash: continue this transcript (set by the supervisor).
+    continue_file: Option<PathBuf>,
+    /// Seconds since the session started, for the timestamps after a restart.
+    offset: f32,
 }
 
 fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
@@ -66,6 +70,8 @@ fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
     let mut from = None;
     let mut dir = None;
     let mut keep_audio = cfg.session_keep_audio;
+    let mut continue_file = None;
+    let mut offset = 0.0f32;
     let mut title = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -79,6 +85,8 @@ fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
             "--dir" => dir = Some(PathBuf::from(it.next().context("--dir needs a folder")?)),
             "--keep-audio" => keep_audio = true,
             "--no-audio" => keep_audio = false,
+            "--continue" => continue_file = Some(PathBuf::from(it.next().context("--continue needs a file")?)),
+            "--offset" => offset = it.next().and_then(|v| v.parse().ok()).context("--offset needs seconds")?,
             other => title.push(other.to_string()),
         }
     }
@@ -96,7 +104,7 @@ fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
     } else {
         title.join(" ")
     };
-    Ok(Options { source, title, notes, from, dir, keep_audio })
+    Ok(Options { source, title, notes, from, dir, keep_audio, continue_file, offset })
 }
 
 /// `vtt session [start|run|stop|status] ...`
@@ -104,7 +112,14 @@ pub fn cmd(args: &[String]) -> Result<()> {
     let rest = &args[args.len().min(1)..];
     match args.first().map(String::as_str) {
         Some("start") => start(rest),
-        Some("run") => run(rest),
+        Some("run") => run_supervised(rest),
+        Some("worker") => run(rest),
+        Some("ask-audio") => {
+            let file = PathBuf::from(rest.first().context("ask-audio needs a transcript")?);
+            let files: Vec<PathBuf> = audio_files_of(&file).into_iter().map(|(p, _)| p).collect();
+            ask_delete_audio(&file, &files, &config::load()?, "Session saved.");
+            Ok(())
+        }
         Some("stop") => stop(),
         Some("status") | None => status(),
         Some("redo") => redo(rest),
@@ -145,12 +160,20 @@ pub fn start(args: &[String]) -> Result<()> {
 /// Stop the running session and wait until its notes are written.
 pub fn stop() -> Result<()> {
     let file = current_file();
-    if platform::running_pid_named(LOCK).is_none() {
+    let Some(pid) = platform::running_pid_named(LOCK) else {
         println!("No session is running.");
         return Ok(());
-    }
+    };
     println!("Stopping: transcribing the last piece and writing notes (can take up to a minute)...");
-    platform::stop_named(LOCK, Duration::from_secs(300))?;
+    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    // Done when the transcript is complete (state file gone) or the process has ended.
+    let until = Instant::now() + Duration::from_secs(300);
+    while current_file().is_some() && platform::running_pid_named(LOCK).is_some() {
+        if Instant::now() > until {
+            bail!("the session did not stop within 5 minutes (process {pid})");
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
     match file {
         Some(f) => println!("Session saved: {}", f.display()),
         None => println!("Session stopped."),
@@ -169,15 +192,64 @@ pub fn status() -> Result<()> {
     Ok(())
 }
 
-/// Is a session running? (for the session hotkey)
+/// Is a session running? (for the session hotkey and the tray)
 pub fn is_running() -> bool {
     platform::running_pid_named(LOCK).is_some()
 }
 
-fn current_file() -> Option<PathBuf> {
+/// The running session's transcript and when it started (unix seconds).
+fn read_state() -> Option<(PathBuf, u64)> {
     let text = std::fs::read_to_string(platform::runtime_file(STATE_FILE).ok()?).ok()?;
-    let p = PathBuf::from(text.trim());
-    p.exists().then_some(p)
+    let mut lines = text.lines();
+    let p = PathBuf::from(lines.next()?.trim());
+    let started = lines.next().and_then(|l| l.trim().parse().ok()).unwrap_or(0);
+    p.exists().then_some((p, started))
+}
+
+fn current_file() -> Option<PathBuf> {
+    read_state().map(|s| s.0)
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// `vtt session run`: supervise the session worker (OTP-style, transient): after a crash
+/// it is restarted and continues the same transcript; a normal end finishes the session.
+fn run_supervised(args: &[String]) -> Result<()> {
+    let cfg = config::load()?;
+    if let Some(p) = cfg.problem() {
+        bail!("vtt isn't set up yet ({p}). Run `vtt setup`");
+    }
+    parse_options(args, &cfg)?; // fail early on bad arguments
+    let Some(_lock) = platform::lock_named(LOCK)? else {
+        bail!("a session is already running: `vtt session status`");
+    };
+    let _ = std::fs::remove_file(platform::runtime_file(STATE_FILE)?); // stale from a crash
+    let base: Vec<String> = args.to_vec();
+    let result = crate::supervisor::supervise(
+        &crate::supervisor::Policy {
+            name: "The session",
+            max_restarts: 3,
+            within: Duration::from_secs(300),
+            grace: Duration::from_secs(300), // time to transcribe the rest and write notes
+        },
+        |restart| {
+            let mut a = vec!["session".to_string(), "worker".to_string()];
+            a.extend(base.iter().cloned());
+            if restart > 0 {
+                if let Some((path, started)) = read_state() {
+                    let offset = unix_now().saturating_sub(started);
+                    a.extend(["--continue".into(), path.to_string_lossy().into(), "--offset".into(), offset.to_string()]);
+                }
+            }
+            a
+        },
+    );
+    let _ = std::fs::remove_file(platform::runtime_file(STATE_FILE)?);
+    result
 }
 
 pub fn session_dir(cfg: &Config) -> Result<PathBuf> {
@@ -205,7 +277,7 @@ fn clock(secs: f32) -> String {
 }
 
 fn notify(msg: &str) {
-    let _ = notify_rust::Notification::new().summary("vtt session").body(msg).timeout(8000).show();
+    let _ = crate::notification().summary("Wortfluss session").body(msg).timeout(8000).show();
 }
 
 /// A piece of one stream waiting to be transcribed.
@@ -223,8 +295,14 @@ pub fn run(args: &[String]) -> Result<()> {
         bail!("vtt isn't set up yet ({p}). Run `vtt setup`");
     }
     let opts = parse_options(args, &cfg)?;
-    let Some(_lock) = platform::lock_named(LOCK)? else {
-        bail!("a session is already running: `vtt session status`");
+    // Under the session supervisor the lock is held there; standalone we take it here.
+    let _lock = if crate::supervisor::is_supervised() {
+        None
+    } else {
+        match platform::lock_named(LOCK)? {
+            Some(l) => Some(l),
+            None => bail!("a session is already running: `vtt session status`"),
+        }
     };
     platform::catch_stop_signals();
     cleanup_old_audio(&cfg);
@@ -236,7 +314,10 @@ pub fn run(args: &[String]) -> Result<()> {
     };
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let (y, mo, d, h, mi, _) = platform::local_time();
-    let path = dir.join(format!("{y}-{mo:02}-{d:02} {h:02}-{mi:02} {}.md", safe_name(&opts.title)));
+    let path = match &opts.continue_file {
+        Some(p) => p.clone(),
+        None => dir.join(format!("{y}-{mo:02}-{d:02} {h:02}-{mi:02} {}.md", safe_name(&opts.title))),
+    };
     let a = cfg.active();
     let header = format!(
         "# {}\n\n_{y}-{mo:02}-{d:02} {h:02}:{mi:02} · {} · {} {}_\n\n{}\n{}\n{}\n\n{}\n\n",
@@ -252,8 +333,20 @@ pub fn run(args: &[String]) -> Result<()> {
         notes::END,
         notes::TRANSCRIPT_HEADING,
     );
-    platform::write_private(&path, &header)?;
-    std::fs::write(platform::runtime_file(STATE_FILE)?, path.to_string_lossy().as_bytes())?;
+    if opts.continue_file.is_some() {
+        let note = format!(
+            "_[{}] The session was restarted after an error; up to about 30 seconds before this may be missing._\n\n",
+            clock(opts.offset)
+        );
+        std::fs::OpenOptions::new().append(true).open(&path)?.write_all(note.as_bytes())?;
+    } else {
+        platform::write_private(&path, &header)?;
+    }
+    let started = unix_now().saturating_sub(opts.offset as u64);
+    std::fs::write(
+        platform::runtime_file(STATE_FILE)?,
+        format!("{}\n{started}\n", path.to_string_lossy()),
+    )?;
     let show = std::io::stdout().is_terminal();
     println!("Session started: {}\nTranscript: {}", opts.source.describe(), path.display());
     if show {
@@ -288,11 +381,11 @@ pub fn run(args: &[String]) -> Result<()> {
         let wav = if opts.keep_audio {
             let p = audio_path(&path, label)?;
             audio_files.push(p.clone());
-            Some(WavWriter::create(&p)?)
+            Some(if opts.continue_file.is_some() { WavWriter::append_to(&p)? } else { WavWriter::create(&p)? })
         } else {
             None
         };
-        streams.push((label, rec, 0.0f32, wav)); // (label, recorder, seconds taken, kept audio)
+        streams.push((label, rec, opts.offset, wav)); // (label, recorder, seconds taken, kept audio)
     }
 
     // One worker transcribes pieces in order and appends them to the file.
@@ -379,11 +472,15 @@ pub fn run(args: &[String]) -> Result<()> {
     let _ = std::fs::remove_file(platform::runtime_file(STATE_FILE)?);
     let why = if stopped_quietly { "Stopped after 30 minutes without speech. " } else { "" };
     println!("{why}Session saved ({summary}): {}", path.display());
-    drop(_lock); // `vtt session stop` returns now; only the audio question is left
+    drop(_lock);
     if audio_files.is_empty() {
         notify(&format!("{why}Saved ({summary}):\n{}", path.display()));
     } else {
-        ask_delete_audio(&path, &audio_files, &cfg, &format!("{why}Saved ({summary})."));
+        // Asked by a separate small process, so this session ends now.
+        let p = path.to_string_lossy().to_string();
+        if platform::start_background_with(&["session", "ask-audio", &p]).is_err() {
+            ask_delete_audio(&path, &audio_files, &cfg, &format!("{why}Saved ({summary})."));
+        }
     }
     Ok(())
 }
@@ -427,8 +524,8 @@ fn ask_delete_audio(transcript: &Path, files: &[PathBuf], cfg: &Config, saved: &
         cfg.session_audio_days
     );
     let (tx, rx) = mpsc::channel();
-    let shown = notify_rust::Notification::new()
-        .summary("vtt session: delete the audio?")
+    let shown = crate::notification()
+        .summary("Wortfluss: delete the session audio?")
         .body(&body)
         .action("delete", "Delete audio")
         .action("keep", "Keep for now")
@@ -578,6 +675,19 @@ impl WavWriter {
         Ok(Self { file, samples: 0 })
     }
 
+    /// Continue an existing file (after a restart); a missing file is created.
+    fn append_to(path: &Path) -> Result<Self> {
+        use std::io::{Seek, SeekFrom};
+        if !path.exists() {
+            return Self::create(path);
+        }
+        let mut file = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
+        let len = file.metadata()?.len();
+        let samples = (len.saturating_sub(44) / 2) as u32;
+        file.seek(SeekFrom::End(0))?;
+        Ok(Self { file, samples })
+    }
+
     fn append(&mut self, samples: &[f32]) {
         let bytes: Vec<u8> = samples
             .iter()
@@ -690,6 +800,9 @@ mod tests {
         let p = audio_path(&transcript, "Others").unwrap();
         let mut w = WavWriter::create(&p).unwrap();
         w.append(&[0.5; 16_000]);
+        w.finish().unwrap();
+        // after a restart the file is continued, not overwritten
+        let mut w = WavWriter::append_to(&p).unwrap();
         w.append(&[0.0; 8_000]);
         w.finish().unwrap();
         let bytes = std::fs::read(&p).unwrap();

@@ -3,6 +3,7 @@ mod config;
 mod correct;
 mod help;
 mod hotkey;
+mod icon;
 mod layout;
 mod mics;
 mod notes;
@@ -13,6 +14,7 @@ mod tray;
 mod secrets;
 mod setup;
 mod stt;
+mod supervisor;
 mod typer;
 mod usage;
 
@@ -37,6 +39,7 @@ fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         None | Some("run") => daemon(),
+        Some("worker") => worker(),
         Some("setup" | "init" | "config" | "settings") => setup::run(false),
         Some("set" | "change") => setup::set(args.get(1).map(String::as_str)),
         Some("phrases" | "phrase" | "words") => setup::phrases_cmd(&args[1..]),
@@ -71,6 +74,17 @@ fn run() -> Result<()> {
         }
         Some("test-type") => test_type(),
         Some("test-mic") => test_mic(),
+        Some("_icons") => {
+            // preview the icon: vtt _icons DIR
+            let dir = std::path::PathBuf::from(args.get(1).map(String::as_str).unwrap_or("."));
+            for (name, st) in [("ready", icon::State::Ready), ("dictating", icon::State::Dictating), ("session", icon::State::Session)] {
+                for size in [22u32, 64] {
+                    icon::write_png(&dir.join(format!("tray-{name}-{size}.png")), size, st, false)?;
+                }
+            }
+            icon::write_png(&dir.join("app-256.png"), 256, icon::State::Ready, true)?;
+            Ok(())
+        }
         Some("-V" | "--version" | "version") => {
             println!("vtt {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -104,8 +118,7 @@ fn daemon() -> Result<()> {
         return Ok(());
     };
     let interactive = std::io::stdin().is_terminal();
-
-    let mut cfg = config::load();
+    let cfg = config::load();
     if cfg.as_ref().map_or(true, |c| c.problem().is_some()) {
         if !interactive {
             let why = match &cfg {
@@ -117,9 +130,27 @@ fn daemon() -> Result<()> {
         }
         println!("vtt isn't set up yet, so let's do that first.");
         setup::run(true)?;
-        cfg = config::load();
+        if let Some(p) = config::load()?.problem() {
+            bail!("{p}. Run `vtt setup`");
+        }
     }
-    let cfg = Arc::new(cfg?);
+    // This process is the supervisor; the work runs in a child that is restarted if it
+    // crashes (see supervisor.rs).
+    supervisor::supervise(
+        &supervisor::Policy {
+            name: "Wortfluss",
+            max_restarts: 5,
+            within: Duration::from_secs(60),
+            grace: Duration::from_secs(5),
+        },
+        |_| vec!["worker".to_string()],
+    )
+}
+
+/// The actual work: hotkey, recording, transcription, typing, tray. Normally started by
+/// the supervisor (`vtt run`).
+fn worker() -> Result<()> {
+    let cfg = Arc::new(config::load()?);
     mics::select(&cfg.mic); // before any other thread starts
     if let Some(p) = cfg.problem() {
         bail!("{p}. Run `vtt setup`");
@@ -145,8 +176,20 @@ fn daemon() -> Result<()> {
                 }
                 // Looked up each time: follows layout switches (German <-> Turkish ...)
                 let layout = layout::resolve(&cfg);
-                if let Err(e) = typer.type_text(&text, &layout) {
-                    report(&format!("typing failed: {e:#}"));
+                // Each text in isolation: a crash while typing loses this text only, and
+                // the virtual keyboard is created again.
+                let typed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    typer.type_text(&text, &layout)
+                }));
+                match typed {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => report(&format!("typing failed: {e:#}")),
+                    Err(_) => {
+                        report("typing failed unexpectedly; the text was not typed");
+                        if let Ok(t) = typer::Typer::new(cfg.key_delay_ms) {
+                            typer = t;
+                        }
+                    }
                 }
                 busy.fetch_sub(1, SeqCst);
             }
@@ -159,8 +202,19 @@ fn daemon() -> Result<()> {
         let (cfg, busy, text_tx) = (cfg.clone(), busy.clone(), text_tx.clone());
         thread::spawn(move || {
             for job in job_rx {
-                if !process(job, &cfg, &text_tx) {
-                    busy.fetch_sub(1, SeqCst);
+                // Each piece in isolation: a crash loses this piece only.
+                let handed_on = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    process(job, &cfg, &text_tx)
+                }));
+                match handed_on {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        busy.fetch_sub(1, SeqCst);
+                    }
+                    Err(_) => {
+                        report("a piece of the recording failed unexpectedly and was skipped");
+                        busy.fetch_sub(1, SeqCst);
+                    }
                 }
             }
         });
@@ -340,6 +394,9 @@ fn daemon() -> Result<()> {
                 match config::load() {
                     Ok(_) => {
                         println!("Settings changed, restarting with the new ones...");
+                        if supervisor::is_supervised() {
+                            std::process::exit(supervisor::RESTART); // the supervisor restarts us
+                        }
                         return Err(platform::restart_self());
                     }
                     Err(e) => report(&format!("new settings not applied: {e:#}")),
@@ -444,10 +501,20 @@ fn change_setting(f: impl FnOnce(&mut Config) -> String) {
     }
 }
 
+/// A notification with the Wortfluss icon.
+pub(crate) fn notification() -> notify_rust::Notification {
+    let mut n = notify_rust::Notification::new();
+    n.appname("Wortfluss");
+    if let Some(p) = icon::app_icon_path() {
+        n.icon(&p.to_string_lossy());
+    }
+    n
+}
+
 /// A short desktop notification (not an error).
 fn info(msg: &str) {
     println!("{msg}");
-    let _ = notify_rust::Notification::new().summary("vtt").body(msg).timeout(3000).show();
+    let _ = notification().summary("Wortfluss").body(msg).timeout(3000).show();
 }
 
 /// In toggle mode, stop when nobody spoke for this long (forgotten recording).
@@ -639,8 +706,8 @@ pub(crate) fn is_hallucination(text: &str) -> bool {
 /// Print an error and show it as a desktop notification (vtt usually runs without a terminal).
 fn report(msg: &str) {
     eprintln!("error: {msg}");
-    let _ = notify_rust::Notification::new()
-        .summary("vtt")
+    let _ = notification()
+        .summary("Wortfluss")
         .body(msg)
         .timeout(6000)
         .show();

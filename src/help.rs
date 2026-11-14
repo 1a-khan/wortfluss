@@ -5,7 +5,7 @@ use crate::providers;
 use anyhow::{bail, Result};
 
 const OVERVIEW: &str = "\
-vtt - hold a key, speak, let go: the text is typed wherever your cursor is.
+Wortfluss (vtt) - hold a key, speak, let go: the text is typed wherever your cursor is.
 
 GETTING STARTED
     vtt setup        answer a few questions (service, key, model, language, hotkey ...)

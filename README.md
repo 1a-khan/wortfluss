@@ -1,4 +1,6 @@
-# vtt: voice to text, anywhere
+# Wortfluss: voice to text, anywhere
+
+_Command: `vtt`._
 
 Hold **Right Ctrl** (or a key you choose), speak, let go. The text is typed into whatever app
 has focus: browser, chat, editor, terminal. Works with Groq, OpenAI, Mistral or your own server.
@@ -194,7 +196,27 @@ Linux has. Copy `vtt` to another machine and run `vtt setup` there.
 
 - Characters your layout has no key for (Urdu script, emoji) are typed with **Ctrl+Shift+U**
   Unicode input. That works in GTK/GNOME apps but not everywhere (some terminals).
-- Keyboards plugged in after vtt starts are seen after the next settings change or restart.
+
+## Reliability: supervision (Erlang/OTP style)
+
+```
+vtt run              supervisor: restarts the worker after a crash (permanent child)
+ └─ vtt worker       hotkey, recording, transcription, typing, tray
+     ├─ keyboard manager   re-attaches keyboards (also newly plugged-in ones)
+     ├─ transcription      each piece in isolation: a failure skips that piece
+     └─ typing             each text in isolation; the virtual keyboard is recreated
+vtt session run      supervisor: restarts a crashed session (transient child),
+ └─ vtt session worker      which continues the same transcript at the right time
+```
+
+- Restart intensity like OTP: more than 5 crashes in 60 s (sessions: 3 in 5 min) and the
+  supervisor gives up with a notification instead of looping; back-off 1, 2, 4 ... 30 s.
+- A settings change is a clean, requested restart (exit code 75), not a crash.
+- `vtt stop` / tray Quit / Ctrl+C stop the child first and give it time to finish (a
+  session finishes its last piece and the notes).
+- Crashes are logged in `~/.local/state/vtt/vtt.log`; the first one shows a notification.
+- A session crash can lose the piece that was being recorded (up to ~30 s); the transcript
+  marks the spot.
 
 ## Windows port (planned)
 
@@ -202,6 +224,7 @@ The code is split so a Windows build replaces only the OS-specific parts:
 
 | Module | Linux now | Windows |
 |---|---|---|
+| `supervisor.rs` | child processes + SIGTERM | child processes + `TerminateProcess` / job object |
 | `platform.rs` | XDG paths, `.desktop` autostart, lock file, `setsid` | `%APPDATA%`, `HKCU\…\Run` key, named mutex, `DETACHED_PROCESS` |
 | `hotkey.rs` | evdev (`/dev/input`) | `SetWindowsHookEx(WH_KEYBOARD_LL)`, no permissions needed |
 | `typer.rs` + `layout.rs` | uinput + xkbcommon key mapping | `SendInput` with `KEYEVENTF_UNICODE`: any character, any layout, no mapping needed |

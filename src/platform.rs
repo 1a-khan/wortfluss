@@ -281,10 +281,11 @@ pub fn set_autostart(on: bool) -> Result<()> {
     std::fs::write(
         &file,
         format!(
-            "[Desktop Entry]\nType=Application\nName=vtt (voice to text)\n\
+            "[Desktop Entry]\nType=Application\nName=Wortfluss\n\
              Comment=Hold a key, speak, and the text is typed\n\
-             Exec=\"{}\" run\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\nTerminal=false\n",
-            exe_path()?.display()
+             Exec=\"{}\" run\nIcon={}\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\nTerminal=false\n",
+            exe_path()?.display(),
+            crate::icon::app_icon_path().map(|p| p.display().to_string()).unwrap_or_default()
         ),
     )?;
     Ok(())

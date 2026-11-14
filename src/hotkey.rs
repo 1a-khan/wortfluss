@@ -5,7 +5,10 @@
 use crate::typer::DEVICE_NAME;
 use anyhow::{bail, Result};
 use evdev::{InputEventKind, Key};
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -151,58 +154,100 @@ pub fn listen(
     shortcuts: Vec<(Combo, Action)>,
     tx: Sender<Event>,
 ) -> Result<usize> {
-    let mut count = 0;
-    for mut dev in keyboards() {
-        if !dev.supported_keys().is_some_and(|k| k.contains(hotkey)) {
-            continue;
-        }
-        let (tx, shortcuts) = (tx.clone(), shortcuts.clone());
-        thread::spawn(move || {
-            let mut mods = Mods::default();
-            loop {
-                let events = match dev.fetch_events() {
-                    Ok(events) => events,
-                    Err(e) => {
-                        eprintln!("stopped reading a keyboard: {e}");
-                        return;
-                    }
-                };
-                for ev in events {
-                    let InputEventKind::Key(k) = ev.kind() else { continue };
-                    if ev.value() != 2 {
-                        mods.update(k, ev.value() == 1);
-                    }
-                    let mut out = Vec::new();
-                    if Some(k) == session_key {
-                        if ev.value() == 1 {
-                            out.push(Event::SessionKey);
-                        }
-                    } else if k == hotkey {
-                        match ev.value() {
-                            1 => out.push(Event::Down),
-                            0 => out.push(Event::Up),
-                            _ => {} // auto-repeat
-                        }
-                    } else if ev.value() == 1 && k.code() < 0x100 {
-                        out.push(Event::OtherKey); // keyboard keys only, not mouse buttons
-                        if let Some((_, action)) = shortcuts.iter().find(|(c, _)| mods.matches(c, k)) {
-                            out.push(Event::Shortcut(action.clone()));
-                        }
-                    }
-                    for e in out {
-                        if tx.send(e).is_err() {
-                            return;
-                        }
-                    }
+    // Supervision (OTP-style, at thread level): a manager attaches a reader to every
+    // keyboard and re-attaches it when its reader ends (keyboard unplugged, read error,
+    // crash). It also picks up keyboards plugged in later.
+    let watched: Arc<Mutex<HashSet<PathBuf>>> = Arc::default();
+    let attach = {
+        let watched = watched.clone();
+        move || -> usize {
+            let mut added = 0;
+            for (path, dev) in evdev::enumerate() {
+                let usable = dev.name() != Some(DEVICE_NAME)
+                    && dev.supported_keys().is_some_and(|k| k.contains(hotkey));
+                if !usable || !watched.lock().unwrap().insert(path.clone()) {
+                    continue;
                 }
+                let (tx, shortcuts, watched) = (tx.clone(), shortcuts.clone(), watched.clone());
+                thread::spawn(move || {
+                    // Removes the keyboard from the watched set however the reader ends,
+                    // so the manager attaches it again.
+                    struct Detach(Arc<Mutex<HashSet<PathBuf>>>, PathBuf);
+                    impl Drop for Detach {
+                        fn drop(&mut self) {
+                            if let Ok(mut w) = self.0.lock() {
+                                w.remove(&self.1);
+                            }
+                        }
+                    }
+                    let _detach = Detach(watched, path);
+                    read_keyboard(dev, hotkey, session_key, &shortcuts, &tx);
+                });
+                added += 1;
             }
-        });
-        count += 1;
-    }
+            added
+        }
+    };
+    let count = attach();
     if count == 0 {
         bail!(PERMISSION_HELP);
     }
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(3));
+        let added = attach();
+        if added > 0 {
+            eprintln!("keyboard(s) attached: {added}");
+        }
+    });
     Ok(count)
+}
+
+/// Read one keyboard until it fails or disappears.
+fn read_keyboard(
+    mut dev: evdev::Device,
+    hotkey: Key,
+    session_key: Option<Key>,
+    shortcuts: &[(Combo, Action)],
+    tx: &Sender<Event>,
+) {
+    let mut mods = Mods::default();
+    loop {
+        let events = match dev.fetch_events() {
+            Ok(events) => events,
+            Err(e) => {
+                eprintln!("keyboard detached: {e}");
+                return;
+            }
+        };
+        for ev in events {
+            let InputEventKind::Key(k) = ev.kind() else { continue };
+            if ev.value() != 2 {
+                mods.update(k, ev.value() == 1);
+            }
+            let mut out = Vec::new();
+            if Some(k) == session_key {
+                if ev.value() == 1 {
+                    out.push(Event::SessionKey);
+                }
+            } else if k == hotkey {
+                match ev.value() {
+                    1 => out.push(Event::Down),
+                    0 => out.push(Event::Up),
+                    _ => {} // auto-repeat
+                }
+            } else if ev.value() == 1 && k.code() < 0x100 {
+                out.push(Event::OtherKey); // keyboard keys only, not mouse buttons
+                if let Some((_, action)) = shortcuts.iter().find(|(c, _)| mods.matches(c, k)) {
+                    out.push(Event::Shortcut(action.clone()));
+                }
+            }
+            for e in out {
+                if tx.send(e).is_err() {
+                    return;
+                }
+            }
+        }
+    }
 }
 
 /// Wait for a key combination (setup). Returns when a non-modifier key is pressed.
