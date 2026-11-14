@@ -66,6 +66,7 @@ pub enum Action {
     ToggleMode,
     ToggleSounds,
     ToggleKeepAudio,
+    ToggleSpeakers,
     SetMic(String),
     SetNotes(String),
     OpenTranscripts,

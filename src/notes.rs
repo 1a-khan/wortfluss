@@ -50,7 +50,10 @@ impl Kind {
                  mentioned. Leave out the section if there are none."
             }
             Kind::Meeting => {
-                "Lines labelled 'You' were said by the user, 'Others' by the other participants.\n\
+                "Each transcript line names who spoke: 'You' is the user, 'Others' the other \
+                 participants together; 'Speaker 1', 'Speaker 2' ... or names are separate people. \
+                 Attribute statements, decisions and tasks to these labels; don't guess real names \
+                 for 'Speaker N' labels.\n\
                  ### Summary\n2 to 5 sentences.\n\
                  ### Discussion\nThe topics discussed, as bullet points.\n\
                  ### Decisions\nBullets. Write 'None recorded' if there were none.\n\

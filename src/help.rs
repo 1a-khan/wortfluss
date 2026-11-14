@@ -35,6 +35,7 @@ COMMANDS
     vtt session redo FILE   transcribe again from kept audio (--keep-audio)
     vtt session delete-audio [FILE]                   delete kept session audio
     vtt notes FILE [lecture|meeting|summary]          (re)write notes for a transcript
+    vtt speakers FILE  give \"Speaker 1\", \"Speaker 2\" ... real names
     vtt autostart on|off      start at login or not
     vtt test-type    type a test sentence after 3 seconds
     vtt test-mic     record 4 seconds to vtt-test.wav
@@ -200,7 +201,19 @@ adds notes at the end.
     vtt session status                          is one running? which file?
     vtt notes FILE meeting                      write other notes for a transcript
 
-Options: --notes lecture|meeting|summary|none, --dir FOLDER, --keep-audio. Defaults,
+WHO SAID WHAT (speaker separation, `vtt set speakers` or --speakers): the lines are
+labelled \"Speaker 1\", \"Speaker 2\" ... and the same voice keeps its name for the whole
+session. In a call (--source both) \"You\" stays You and the other side is separated.
+Afterwards give them names; the notes change too:
+
+    vtt speakers FILE                           asks for a name for each speaker
+    vtt speakers FILE \"Speaker 1=Anna\" \"Speaker 2=Ben\"
+
+Needs OpenRouter (ElevenLabs Scribe v2, ~$0.28/h), OpenAI or Mistral; Groq can't tell
+voices apart. Works best with clear turns; people talking at the same time, very short
+answers (\"ja\") and similar voices can be assigned to the wrong speaker.
+
+Options: --notes lecture|meeting|summary|none, --speakers, --dir FOLDER, --keep-audio. Defaults,
 a session key (press to start, press again to stop) and the folder: `vtt set session`.
 Also from the tray icon menu, or Ctrl+Alt+S (session) / Ctrl+Alt+M (call).
 

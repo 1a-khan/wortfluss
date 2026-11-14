@@ -26,6 +26,9 @@ pub struct ProviderSettings {
     pub api_url: String,
     /// Text model for spelling/grammar correction. Empty = recommended one.
     pub correction_model: String,
+    /// Speech model that labels speakers (sessions with speaker separation). Empty =
+    /// recommended one.
+    pub speaker_model: String,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -54,6 +57,8 @@ pub struct Config {
     pub session_keep_audio: bool,
     /// Kept session audio is deleted automatically after this many days.
     pub session_audio_days: u64,
+    /// Separate speakers in sessions ("Speaker 1: ...", "Speaker 2: ...").
+    pub session_speakers: bool,
     /// Keyboard shortcuts ("Ctrl+Alt+S"; "" = off).
     pub shortcut_session: String,
     pub shortcut_call: String,
@@ -103,6 +108,7 @@ impl Default for Config {
             session_hotkey: String::new(),
             session_keep_audio: false,
             session_audio_days: 7,
+            session_speakers: false,
             shortcut_session: "Ctrl+Alt+S".into(),
             shortcut_call: "Ctrl+Alt+M".into(),
             shortcut_correction: "Ctrl+Alt+K".into(),
@@ -133,6 +139,8 @@ pub struct Active {
     pub api_key: String,
     pub model: String,
     pub correction_model: String,
+    /// Empty when the service can't label speakers.
+    pub speaker_model: String,
 }
 
 impl Config {
@@ -189,12 +197,18 @@ impl Config {
         } else {
             settings.correction_model.trim().to_string()
         };
+        let speaker_model = if settings.speaker_model.trim().is_empty() {
+            crate::stt::speaker_model(provider.id).unwrap_or("").to_string()
+        } else {
+            settings.speaker_model.trim().to_string()
+        };
         Active {
             provider,
             api_url,
             api_key,
             model,
             correction_model,
+            speaker_model,
         }
     }
 
@@ -407,6 +421,11 @@ session_hotkey = {s_key}
 session_keep_audio = {keep}
 session_audio_days = {days}
 
+# Separate speakers in sessions: "Speaker 1: ...", "Speaker 2: ..." (rename them later with
+# `vtt speakers FILE`). Needs a service that labels voices (OpenRouter, OpenAI, Mistral);
+# the model is `speaker_model` in the service's section. Costs a bit more per hour.
+session_speakers = {speakers}
+
 # KEYBOARD SHORTCUTS ("Ctrl+Alt+S", "Super+F9" ...; "" = off). Easiest: `vtt set shortcuts`.
 # The focused app also sees the keys, so pick combinations your apps don't use.
 shortcut_session = {sc_session}        # start/stop a session (default source)
@@ -448,6 +467,7 @@ key_delay_ms = {delay}
         s_key = q(&c.session_hotkey),
         keep = c.session_keep_audio,
         days = c.session_audio_days,
+        speakers = c.session_speakers,
         sc_session = q(&c.shortcut_session),
         sc_call = q(&c.shortcut_call),
         sc_corr = q(&c.shortcut_correction),
@@ -462,13 +482,14 @@ key_delay_ms = {delay}
         let s = c.settings(p.id);
         out.push_str(&format!(
             "\n# {} - {}\n[{}]\n# API key: stored encrypted in secrets.env as {} (set it with `vtt setup`)\n\
-             model = {}\ncorrection_model = {}\n",
+             model = {}\ncorrection_model = {}\nspeaker_model = {}\n",
             p.name,
             p.blurb,
             p.id,
             secrets::var_name(p.id),
             q(&s.model),
-            q(&s.correction_model)
+            q(&s.correction_model),
+            q(&s.speaker_model)
         ));
         if p.id == "custom" {
             out.push_str("# Server address, e.g. \"http://localhost:8000/v1\"\n");

@@ -149,6 +149,7 @@ pub enum Setting {
     Layout,
     Autostart,
     Session,
+    Speakers,
     Shortcuts,
     Advanced,
 }
@@ -168,6 +169,7 @@ const SETTINGS: &[(Setting, &str, &[&str], &str)] = &[
     (Setting::Layout, "layout", &["keyboard"], "Keyboard layout"),
     (Setting::Autostart, "autostart", &["login", "startup"], "Start at login"),
     (Setting::Session, "session", &["sessions", "notes", "lecture", "meeting"], "Session mode (lectures, meetings)"),
+    (Setting::Speakers, "speakers", &["speaker", "diarization", "who"], "Separate speakers in sessions"),
     (Setting::Shortcuts, "shortcuts", &["shortcut", "keys", "combos", "tray"], "Keyboard shortcuts & tray icon"),
     (Setting::Advanced, "advanced", &["spacing", "typing-speed", "pieces"], "Advanced (spacing, typing speed, pieces)"),
 ];
@@ -217,6 +219,9 @@ fn current_value(cfg: &Config, s: Setting) -> String {
         Setting::Shortcuts => {
             let n = cfg.shortcuts().len();
             format!("{n} shortcut(s), tray {}", if cfg.tray { "on" } else { "off" })
+        }
+        Setting::Speakers => {
+            if cfg.session_speakers { format!("on ({})", cfg.active().speaker_model) } else { "off".into() }
         }
         Setting::Session => format!(
             "{}, notes {}, key {}",
@@ -360,6 +365,7 @@ fn change(t: &ColorfulTheme, cfg: &mut Config, s: Setting) -> Result<()> {
         }
         Setting::Advanced => ask_advanced(t, cfg)?,
         Setting::Session => ask_session(t, cfg)?,
+        Setting::Speakers => ask_speakers(t, cfg)?,
         Setting::Shortcuts => ask_shortcuts(t, cfg)?,
     }
     Ok(())
@@ -647,6 +653,45 @@ fn ask_mode(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
 }
 
 /// Defaults for `vtt session start` and the session key.
+/// Speaker separation for sessions, and the model that does it.
+fn ask_speakers(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
+    let p = providers::get(&cfg.provider);
+    let known = stt::speaker_models(p.id);
+    if known.is_empty() && cfg.settings(p.id).speaker_model.trim().is_empty() {
+        println!("  {} can't tell speakers apart. To get \"Speaker 1: ... / Speaker 2: ...\" in sessions,", p.name);
+        println!("  switch to OpenRouter, OpenAI or Mistral (`vtt set service`).");
+        cfg.session_speakers = false;
+        return Ok(());
+    }
+    cfg.session_speakers = Confirm::with_theme(t)
+        .with_prompt(
+            "Separate speakers in sessions? (\"Speaker 1: ... Speaker 2: ...\", rename them afterwards with \
+             `vtt speakers FILE`; a bit more expensive)",
+        )
+        .default(cfg.session_speakers)
+        .interact()?;
+    if !cfg.session_speakers {
+        return Ok(());
+    }
+    let current = cfg.active().speaker_model;
+    let mut items: Vec<String> = known.iter().map(|(id, note)| format!("{id:<40} {note}")).collect();
+    items.push("Other model (enter its id)".into());
+    let i = Select::with_theme(t)
+        .with_prompt("Which model separates the speakers?")
+        .items(&items)
+        .default(known.iter().position(|m| m.0 == current).unwrap_or(0))
+        .interact()?;
+    let model = if i == known.len() {
+        Input::<String>::with_theme(t).with_prompt("Model id").default(current).interact_text()?
+    } else {
+        known[i].0.to_string()
+    };
+    // Keep the setting empty for the recommended model, so a better default later applies.
+    cfg.settings_mut(p.id).speaker_model =
+        if Some(model.trim()) == stt::speaker_model(p.id) { String::new() } else { model.trim().to_string() };
+    Ok(())
+}
+
 fn ask_session(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
     println!("  Session mode writes a transcript of a lecture, video or meeting to a file and");
     println!("  notes at the end. Start: `vtt session start [title]` or the session key.");
@@ -688,6 +733,8 @@ fn ask_session(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
         .default(current.clone())
         .interact_text()?;
     cfg.session_dir = if dir.trim() == current { cfg.session_dir.clone() } else { dir.trim().to_string() };
+
+    ask_speakers(t, cfg)?;
 
     cfg.session_keep_audio = Confirm::with_theme(t)
         .with_prompt(format!(

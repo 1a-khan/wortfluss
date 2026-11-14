@@ -10,6 +10,7 @@ mod notes;
 mod platform;
 mod providers;
 mod session;
+mod speakers;
 mod tray;
 mod secrets;
 mod setup;
@@ -57,6 +58,7 @@ fn run() -> Result<()> {
         Some("retry") => retry(),
         Some("session" | "sessions") => session::cmd(&args[1..]),
         Some("notes") => notes::cmd(&args[1..]),
+        Some("speakers" | "speaker" | "names") => speakers::cmd(&args[1..]),
         Some("mics" | "microphones") => {
             for m in mics::list()? {
                 println!("{}{}{}\n    {}", m.description, if m.is_default { "  [system default]" } else { "" }, if m.muted { "  [muted]" } else { "" }, m.name);
@@ -74,6 +76,19 @@ fn run() -> Result<()> {
         }
         Some("test-type") => test_type(),
         Some("test-mic") => test_mic(),
+        Some("_diarize") => {
+            // developer test: vtt _diarize FILE.wav [MODEL] -> speaker segments
+            let cfg = config::load()?;
+            let a = cfg.active();
+            let wav = std::fs::read(args.get(1).ok_or_else(|| anyhow::anyhow!("vtt _diarize FILE.wav [MODEL]"))?)?;
+            let model = args.get(2).cloned().unwrap_or_else(|| stt::speaker_model(a.provider.id).unwrap_or("").to_string());
+            let d = stt::diarize(&a, &model, &cfg.language, &wav)?;
+            for s in d.segments {
+                println!("{:6.1}-{:6.1} [{}] {}", s.start, s.end, s.speaker.unwrap_or_default(), s.text);
+            }
+            println!("cost: {:?}", d.cost);
+            Ok(())
+        }
         Some("_icons") => {
             // preview the icon: vtt _icons DIR
             let dir = std::path::PathBuf::from(args.get(1).map(String::as_str).unwrap_or("."));
@@ -438,6 +453,15 @@ fn handle_action(action: hotkey::Action) {
         ToggleKeepAudio => change_setting(|c| {
             c.session_keep_audio = !c.session_keep_audio;
             format!("Keep session audio {}", on(c.session_keep_audio))
+        }),
+        ToggleSpeakers => change_setting(|c| {
+            c.session_speakers = !c.session_speakers;
+            if c.session_speakers && c.active().speaker_model.is_empty() {
+                c.session_speakers = false;
+                format!("{} can't separate speakers. Switch to OpenRouter, OpenAI or Mistral", c.active().provider.name)
+            } else {
+                format!("Separate speakers in sessions {}", on(c.session_speakers))
+            }
         }),
         SetMic(name) => change_setting(move |c| {
             c.mic = name;

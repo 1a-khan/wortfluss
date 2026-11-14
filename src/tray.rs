@@ -24,6 +24,7 @@ pub struct VttTray {
     correct: bool,
     sounds: bool,
     keep_audio: bool,
+    speakers: bool,
     mic: String,
     notes: String,
     hotkey: String,
@@ -57,6 +58,7 @@ pub fn start(cfg: &Config, tx: Sender<Event>) -> Option<Handle> {
         correct: cfg.correct_text,
         sounds: cfg.sounds,
         keep_audio: cfg.session_keep_audio,
+        speakers: cfg.session_speakers,
         mic: cfg.mic.clone(),
         notes: cfg.session_notes.clone(),
         hotkey: hotkey::pretty(&cfg.hotkey),
@@ -222,6 +224,7 @@ impl ksni::Tray for VttTray {
             }
             .into(),
         );
+        menu.push(check("Separate speakers (Speaker 1, 2 ...)", self.speakers, Action::ToggleSpeakers));
         menu.push(check("Keep session audio (asks to delete)", self.keep_audio, Action::ToggleKeepAudio));
         menu.push(check("Beeps", self.sounds, Action::ToggleSounds));
         menu.push(MenuItem::Separator);

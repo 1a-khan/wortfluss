@@ -93,6 +93,13 @@ live, with `[hh:mm:ss]` times, and writes notes at the top when the session stop
 | `mic` | a lecture or talk in the room | none |
 | `both` | calls and online meetings (use headphones) | **You** (mic) / **Others** (computer) |
 
+- **Who said what** (`vtt set speakers`, tray, or `--speakers`): lines are labelled
+  *Speaker 1, Speaker 2 …*, consistently over the whole session; in calls *You* stays and
+  the other side is separated. `vtt speakers FILE "Speaker 1=Anna"` puts in real names
+  (transcript and notes). Needs a speaker-labelling model: OpenRouter `elevenlabs/scribe-v2`
+  (~$0.28/h incl. overhead), OpenAI `gpt-4o-transcribe-diarize` or Mistral Voxtral. How
+  names stay consistent: each piece is sent with ~3 s voice samples of the speakers known
+  so far in front of it, and the service's label for each sample maps to the session name.
 - Notes: lecture notes (summary, key points, terms, questions), meeting minutes (decisions,
   action items), or a summary; written by the text model of `vtt set correction`.
   `vtt notes FILE TYPE` redoes them without touching the transcript.

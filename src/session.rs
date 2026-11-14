@@ -4,14 +4,19 @@
 //! Each source is recorded as its own stream, cut into ~30 s pieces at pauses; pieces
 //! without speech are skipped. With both sources the lines are labelled "You" (mic) and
 //! "Others" (system audio). Only text is kept, never audio (except failed pieces until
-//! `vtt retry`).
+//! `vtt retry` or when keeping the audio is switched on).
+//!
+//! With speaker separation on, the voices are labelled "Speaker 1", "Speaker 2" ... (see
+//! speakers.rs); in a call only the other side, since "You" is already known.
 
 use crate::config::{self, Config};
 use crate::mics::{self, SourceRecorder};
 use crate::notes::{self, Kind};
+use crate::speakers::{self, Tracker};
 use crate::{audio, correct, platform, stt, usage};
 use anyhow::{bail, Context, Result};
 use std::io::{IsTerminal, Write};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
@@ -62,6 +67,8 @@ struct Options {
     continue_file: Option<PathBuf>,
     /// Seconds since the session started, for the timestamps after a restart.
     offset: f32,
+    /// Separate speakers.
+    speakers: bool,
 }
 
 fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
@@ -72,6 +79,7 @@ fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
     let mut keep_audio = cfg.session_keep_audio;
     let mut continue_file = None;
     let mut offset = 0.0f32;
+    let mut speakers = cfg.session_speakers;
     let mut title = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -85,6 +93,8 @@ fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
             "--dir" => dir = Some(PathBuf::from(it.next().context("--dir needs a folder")?)),
             "--keep-audio" => keep_audio = true,
             "--no-audio" => keep_audio = false,
+            "--speakers" => speakers = true,
+            "--no-speakers" => speakers = false,
             "--continue" => continue_file = Some(PathBuf::from(it.next().context("--continue needs a file")?)),
             "--offset" => offset = it.next().and_then(|v| v.parse().ok()).context("--offset needs seconds")?,
             other => title.push(other.to_string()),
@@ -93,7 +103,7 @@ fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
     let notes_setting = notes_arg.unwrap_or_else(|| cfg.session_notes.clone());
     let notes = match notes_setting.trim().to_lowercase().as_str() {
         "none" | "off" | "no" => None,
-        "" | "auto" => Some(if source == Source::Both { Kind::Meeting } else { Kind::Lecture }),
+        "" | "auto" => Some(if source == Source::Both || speakers { Kind::Meeting } else { Kind::Lecture }),
         k => Some(Kind::parse(k).with_context(|| format!("unknown notes type `{k}`: lecture, meeting, summary or none"))?),
     };
     let title = if title.is_empty() {
@@ -104,7 +114,7 @@ fn parse_options(args: &[String], cfg: &Config) -> Result<Options> {
     } else {
         title.join(" ")
     };
-    Ok(Options { source, title, notes, from, dir, keep_audio, continue_file, offset })
+    Ok(Options { source, title, notes, from, dir, keep_audio, continue_file, offset, speakers })
 }
 
 /// `vtt session [start|run|stop|status] ...`
@@ -294,7 +304,16 @@ pub fn run(args: &[String]) -> Result<()> {
     if let Some(p) = cfg.problem() {
         bail!("vtt isn't set up yet ({p}). Run `vtt setup`");
     }
-    let opts = parse_options(args, &cfg)?;
+    let mut opts = parse_options(args, &cfg)?;
+    let speaker_warning = if opts.speakers && cfg.active().speaker_model.is_empty() {
+        opts.speakers = false;
+        Some(format!(
+            "{} can't separate speakers; this session is transcribed without. Use OpenRouter, OpenAI or Mistral for that (`vtt set service`).",
+            cfg.active().provider.name
+        ))
+    } else {
+        None
+    };
     // Under the session supervisor the lock is held there; standalone we take it here.
     let _lock = if crate::supervisor::is_supervised() {
         None
@@ -320,11 +339,12 @@ pub fn run(args: &[String]) -> Result<()> {
     };
     let a = cfg.active();
     let header = format!(
-        "# {}\n\n_{y}-{mo:02}-{d:02} {h:02}:{mi:02} · {} · {} {}_\n\n{}\n{}\n{}\n\n{}\n\n",
+        "# {}\n\n_{y}-{mo:02}-{d:02} {h:02}:{mi:02} · {} · {} {}{}_\n\n{}\n{}\n{}\n\n{}\n\n",
         opts.title,
         opts.source.describe(),
         a.provider.name,
-        a.model,
+        if opts.speakers { &a.speaker_model } else { &a.model },
+        if opts.speakers { " · speakers separated (rename: `vtt speakers FILE`)" } else { "" },
         notes::START,
         match opts.notes {
             Some(k) => format!("_{} will appear here when the session ends._", capitalize(k.name())),
@@ -365,6 +385,10 @@ pub fn run(args: &[String]) -> Result<()> {
     if no_headphones {
         println!("Tip: use headphones; with loudspeakers the other side may be transcribed twice.");
     }
+    if let Some(w) = &speaker_warning {
+        println!("Note: {w}");
+        notify(w);
+    }
 
     // The streams.
     let mic = if cfg.mic.trim().is_empty() { mics::DEFAULT_MIC.to_string() } else { cfg.mic.trim().to_string() };
@@ -392,17 +416,21 @@ pub fn run(args: &[String]) -> Result<()> {
     let (tx, rx) = mpsc::channel::<Job>();
     let worker = {
         let (cfg, path) = (cfg.clone(), path.clone());
+        let speakers = opts.speakers;
+        // After a restart, new voices get numbers after the ones already in the file.
+        let first = std::fs::read_to_string(&path).map(|t| speakers::last_number(&t)).unwrap_or(0);
         thread::spawn(move || {
+            let mut trackers = Trackers::new(speakers, first);
             let mut words = 0usize;
             for job in rx {
-                words += transcribe_piece(job, &cfg, &path, show);
+                let tracker = trackers.get(job.label);
+                words += transcribe_piece(job, &cfg, &path, show, tracker);
             }
             words
         })
     };
 
-    let piece = cfg.piece_seconds.clamp(10, 120) as f32;
-    let (min, max) = (piece * 0.67, piece * 1.5);
+    let (min, max) = piece_seconds(&cfg, opts.speakers);
     let started = Instant::now();
     let mut last_speech = Instant::now();
     let mut stopped_quietly = false;
@@ -591,7 +619,9 @@ fn delete_audio_cmd(args: &[String]) -> Result<()> {
 /// `vtt session redo FILE [--notes TYPE]`: transcribe a session again from its kept audio
 /// (e.g. after changing the model or language), then write the notes again.
 fn redo(args: &[String]) -> Result<()> {
-    let file = args.first().context("usage: vtt session redo FILE [--notes lecture|meeting|summary|none]")?;
+    let file = args
+        .first()
+        .context("usage: vtt session redo FILE [--notes lecture|meeting|summary|none] [--speakers|--no-speakers]")?;
     let path = PathBuf::from(file);
     let cfg = config::load()?;
     let audio = audio_files_of(&path);
@@ -609,10 +639,17 @@ fn redo(args: &[String]) -> Result<()> {
         Some(k) => Some(Kind::parse(k).with_context(|| format!("unknown notes type `{k}`"))?),
         None => Some(if both { Kind::Meeting } else { Kind::Lecture }),
     };
+    let mut speakers_on = cfg.session_speakers || args.iter().any(|a| a == "--speakers");
+    if args.iter().any(|a| a == "--no-speakers") {
+        speakers_on = false;
+    }
+    if speakers_on && cfg.active().speaker_model.is_empty() {
+        println!("{} can't separate speakers; transcribing without.", cfg.active().provider.name);
+        speakers_on = false;
+    }
 
     // Cut every stream into pieces offline, then transcribe in time order.
-    let piece = cfg.piece_seconds.clamp(10, 120) as f32;
-    let (min, max) = (piece * 0.67, piece * 1.5);
+    let (min, max) = piece_seconds(&cfg, speakers_on);
     let mut jobs = Vec::new();
     for (file, label) in &audio {
         let bytes = std::fs::read(file)?;
@@ -642,8 +679,10 @@ fn redo(args: &[String]) -> Result<()> {
 
 ", &text[..head_end]))?;
     let mut words = 0;
+    let mut trackers = Trackers::new(speakers_on, 0);
     for job in jobs {
-        words += transcribe_piece(job, &cfg, &path, true);
+        let tracker = trackers.get(job.label);
+        words += transcribe_piece(job, &cfg, &path, true, tracker);
     }
     if let Some(kind) = notes_kind {
         if words >= 10 {
@@ -725,50 +764,115 @@ fn wav_header(samples: u32) -> Vec<u8> {
     h
 }
 
+/// Piece length: longer with speaker separation, so the voice samples sent in front of
+/// each piece are a small share of it.
+fn piece_seconds(cfg: &Config, speakers: bool) -> (f32, f32) {
+    let mut piece = cfg.piece_seconds.clamp(10, 120) as f32;
+    if speakers {
+        piece = piece.max(60.0);
+    }
+    (piece * 0.67, piece * 1.5)
+}
+
+/// One speaker tracker per stream that gets speaker separation ("You" never does).
+struct Trackers {
+    on: bool,
+    first: usize,
+    map: HashMap<&'static str, Tracker>,
+}
+
+impl Trackers {
+    fn new(on: bool, first: usize) -> Self {
+        Trackers { on, first, map: HashMap::new() }
+    }
+
+    fn get(&mut self, label: &'static str) -> Option<&mut Tracker> {
+        if !self.on || label == "You" {
+            return None;
+        }
+        let first = self.first;
+        Some(self.map.entry(label).or_insert_with(|| Tracker::starting_after(first)))
+    }
+}
+
+/// Correct a text if the setting is on (failures keep the text as it is).
+fn corrected(cfg: &Config, a: &config::Active, text: String, phrases: &[String]) -> String {
+    if cfg.correct_text && text.split_whitespace().count() >= 2 && !a.correction_model.is_empty() {
+        if let Ok(c) = correct::correct(a, &a.correction_model, &text, phrases) {
+            let _ = usage::record(a.provider.id, &a.correction_model, 0.0, c.cost);
+            return c.text;
+        }
+    }
+    text
+}
+
 /// Transcribe one piece and append it to the transcript. Returns the number of words.
-fn transcribe_piece(job: Job, cfg: &Config, path: &Path, show: bool) -> usize {
+fn transcribe_piece(job: Job, cfg: &Config, path: &Path, show: bool, tracker: Option<&mut Tracker>) -> usize {
     let Job { mut clip, label, at } = job;
     clip.trim_silence();
     clip.shorten_pauses();
     let a = cfg.active();
     let phrases = cfg.phrases();
-    let wav = clip.to_wav();
-    let line = match stt::transcribe(&a, &cfg.language, &phrases.join(", "), &wav) {
-        Ok(t) => {
-            let _ = usage::record(a.provider.id, &a.model, clip.seconds(), t.cost);
-            let mut text = t.text;
-            if text.is_empty() || crate::is_hallucination(&text) {
-                return 0;
-            }
-            if cfg.correct_text && text.split_whitespace().count() >= 2 && !a.correction_model.is_empty() {
-                if let Ok(c) = correct::correct(&a, &a.correction_model, &text, &phrases) {
-                    let _ = usage::record(a.provider.id, &a.correction_model, 0.0, c.cost);
-                    text = c.text;
+    let mut entries: Vec<(f32, String, String)> = Vec::new(); // (time, label, text)
+
+    // With speaker separation; if that fails, the piece is transcribed without, so no
+    // text is lost.
+    let mut separated = false;
+    if let Some(tracker) = tracker {
+        match tracker.transcribe(&a, &a.speaker_model, &cfg.language, &clip) {
+            Ok((turns, cost)) => {
+                let _ = usage::record(a.provider.id, &a.speaker_model, clip.seconds(), cost);
+                for t in turns {
+                    if t.text.is_empty() || crate::is_hallucination(&t.text) {
+                        continue;
+                    }
+                    let who = if t.speaker.is_empty() { label.to_string() } else { t.speaker };
+                    entries.push((at + t.at, who, corrected(cfg, &a, t.text, &phrases)));
                 }
+                separated = true;
             }
-            text
+            Err(e) => eprintln!("speaker separation failed at {} ({e:#}); transcribing without", clock(at)),
         }
-        Err(e) => {
-            let saved = crate::save_failed(&wav, (at as u32).max(1))
-                .map(|p| format!(" Audio saved for `vtt retry`: {}", p.display()))
-                .unwrap_or_default();
-            eprintln!("piece at {} failed: {e:#}", clock(at));
-            format!("_[this part could not be transcribed: {e}.{saved}]_")
-        }
-    };
-    let label = if label.is_empty() { String::new() } else { format!(" {label}:") };
-    let entry = format!("**[{}]{label}** {line}\n\n", clock(at));
+    }
+    if !separated {
+        let wav = clip.to_wav();
+        let line = match stt::transcribe(&a, &cfg.language, &phrases.join(", "), &wav) {
+            Ok(t) => {
+                let _ = usage::record(a.provider.id, &a.model, clip.seconds(), t.cost);
+                if t.text.is_empty() || crate::is_hallucination(&t.text) {
+                    return 0;
+                }
+                corrected(cfg, &a, t.text, &phrases)
+            }
+            Err(e) => {
+                let saved = crate::save_failed(&wav, (at as u32).max(1))
+                    .map(|p| format!(" Audio saved for `vtt retry`: {}", p.display()))
+                    .unwrap_or_default();
+                eprintln!("piece at {} failed: {e:#}", clock(at));
+                format!("_[this part could not be transcribed: {e}.{saved}]_")
+            }
+        };
+        entries.push((at, label.to_string(), line));
+    }
+
+    let mut out = String::new();
+    let mut words = 0;
+    for (time, who, text) in entries {
+        let who = if who.is_empty() { String::new() } else { format!(" {who}:") };
+        out.push_str(&format!("**[{}]{who}** {text}\n\n", clock(time)));
+        words += text.split_whitespace().count();
+    }
     if show {
-        print!("{entry}");
+        print!("{out}");
     }
     let appended = std::fs::OpenOptions::new()
         .append(true)
         .open(path)
-        .and_then(|mut f| f.write_all(entry.as_bytes()));
+        .and_then(|mut f| f.write_all(out.as_bytes()));
     if let Err(e) = appended {
         eprintln!("could not write to {}: {e}", path.display());
     }
-    line.split_whitespace().count()
+    words
 }
 
 fn capitalize(s: &str) -> String {
