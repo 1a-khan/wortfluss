@@ -4,18 +4,38 @@ mod correct;
 mod help;
 mod hotkey;
 mod icon;
+#[cfg(target_os = "linux")]
+#[path = "linux/layout.rs"]
 mod layout;
+#[cfg(windows)]
+#[path = "windows/layout.rs"]
+mod layout;
+#[cfg(target_os = "linux")]
+#[path = "linux/mics.rs"]
+mod mics;
+#[cfg(windows)]
+#[path = "windows/mics.rs"]
 mod mics;
 mod notes;
 mod platform;
 mod providers;
 mod session;
 mod speakers;
+#[cfg(target_os = "linux")]
+#[path = "linux/tray.rs"]
+mod tray;
+#[cfg(windows)]
+#[path = "windows/tray.rs"]
 mod tray;
 mod secrets;
 mod setup;
 mod stt;
 mod supervisor;
+#[cfg(target_os = "linux")]
+#[path = "linux/typer.rs"]
+mod typer;
+#[cfg(windows)]
+#[path = "windows/typer.rs"]
 mod typer;
 mod usage;
 
@@ -30,8 +50,17 @@ use std::time::Duration;
 
 
 fn main() {
-    if let Err(e) = run() {
+    let result = run();
+    if let Err(e) = &result {
         eprintln!("error: {e:#}");
+    }
+    // A console window of its own (Windows: started from the Start menu, the tray or the
+    // installer) closes when vtt ends: wait, so the last message can be read.
+    if platform::owns_console() {
+        println!("\nPress Enter to close this window.");
+        let _ = std::io::stdin().read_line(&mut String::new());
+    }
+    if result.is_err() {
         std::process::exit(1);
     }
 }
@@ -98,6 +127,7 @@ fn run() -> Result<()> {
                 }
             }
             icon::write_png(&dir.join("app-256.png"), 256, icon::State::Ready, true)?;
+            icon::write_ico(&dir.join("wortfluss.ico"))?;
             Ok(())
         }
         Some("-V" | "--version" | "version") => {

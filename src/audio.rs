@@ -59,25 +59,32 @@ impl Converter {
 }
 
 impl Recorder {
+    /// Record the chosen microphone (Linux: the sound server routes to it; Windows: by name).
     pub fn start() -> Result<Self> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .context("no microphone found")?;
-        let supported = device
-            .default_input_config()
-            .context("could not read microphone settings")?;
+        #[cfg(windows)]
+        let device = crate::mics::chosen_input(&host);
+        #[cfg(not(windows))]
+        let device = host.default_input_device();
+        Self::from_device(&device.context("no microphone found")?, false)
+    }
+
+    /// Record from a device. `loopback`: an output device, recording what it plays
+    /// (Windows WASAPI loopback).
+    pub fn from_device(device: &cpal::Device, loopback: bool) -> Result<Self> {
+        let supported = if loopback { device.default_output_config() } else { device.default_input_config() }
+            .context("could not read the audio device settings")?;
         let format = supported.sample_format();
         let config: cpal::StreamConfig = supported.into();
         let samples = Arc::new(Mutex::new(Vec::new()));
         let conv = Converter::new(config.sample_rate.0, config.channels);
 
         let stream = match format {
-            SampleFormat::F32 => build::<f32>(&device, &config, samples.clone(), conv)?,
-            SampleFormat::I16 => build::<i16>(&device, &config, samples.clone(), conv)?,
-            SampleFormat::U16 => build::<u16>(&device, &config, samples.clone(), conv)?,
-            SampleFormat::I32 => build::<i32>(&device, &config, samples.clone(), conv)?,
-            SampleFormat::U8 => build::<u8>(&device, &config, samples.clone(), conv)?,
+            SampleFormat::F32 => build::<f32>(device, &config, samples.clone(), conv)?,
+            SampleFormat::I16 => build::<i16>(device, &config, samples.clone(), conv)?,
+            SampleFormat::U16 => build::<u16>(device, &config, samples.clone(), conv)?,
+            SampleFormat::I32 => build::<i32>(device, &config, samples.clone(), conv)?,
+            SampleFormat::U8 => build::<u8>(device, &config, samples.clone(), conv)?,
             other => bail!("unsupported microphone sample format {other:?}"),
         };
         stream.play().context("could not start microphone")?;

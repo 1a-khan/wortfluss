@@ -45,6 +45,7 @@ pub fn is_supervised() -> bool {
     std::env::var_os(SUPERVISED).is_some()
 }
 
+#[cfg(unix)]
 fn describe(status: std::process::ExitStatus) -> String {
     use std::os::unix::process::ExitStatusExt;
     match (status.code(), status.signal()) {
@@ -57,6 +58,18 @@ fn describe(status: std::process::ExitStatus) -> String {
     }
 }
 
+#[cfg(windows)]
+fn describe(status: std::process::ExitStatus) -> String {
+    match status.code().map(|c| c as u32) {
+        Some(0xC0000005) => "crashed (access violation)".into(),
+        Some(0xC0000409) => "aborted (stack buffer overrun / panic abort)".into(),
+        Some(1) => "exit code 1 (killed or failed)".into(),
+        Some(c) if c > 0xC0000000 => format!("crashed (0x{c:08X})"),
+        Some(c) => format!("exit code {c}"),
+        None => "unknown".into(),
+    }
+}
+
 /// Run `child_args(restart_number)` under supervision until it exits normally (0), the
 /// supervisor is asked to stop, or the restart intensity is exceeded.
 pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>) -> Result<()> {
@@ -65,10 +78,10 @@ pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>
     let mut crashes: VecDeque<Instant> = VecDeque::new();
     let mut restarts = 0u32;
     loop {
-        let mut child: Child = Command::new(&exe)
-            .args(child_args(restarts))
-            .env(SUPERVISED, "1")
-            .spawn()?;
+        let mut cmd = Command::new(&exe);
+        cmd.args(child_args(restarts)).env(SUPERVISED, "1");
+        platform::quiet_child(&mut cmd);
+        let mut child: Child = cmd.spawn()?;
         let status = wait(&mut child, policy.grace)?;
         if platform::stop_requested() {
             return Ok(()); // we were asked to stop; the child has finished
@@ -119,7 +132,7 @@ pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>
     }
 }
 
-/// Wait for the child; on a stop request pass SIGTERM on and allow `grace` to finish.
+/// Wait for the child; on a stop request pass it on and allow `grace` to finish.
 fn wait(child: &mut Child, grace: Duration) -> Result<std::process::ExitStatus> {
     let mut deadline: Option<Instant> = None;
     loop {
@@ -129,7 +142,7 @@ fn wait(child: &mut Child, grace: Duration) -> Result<std::process::ExitStatus> 
         if platform::stop_requested() {
             match deadline {
                 None => {
-                    unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+                    let _ = platform::request_stop(child.id());
                     deadline = Some(Instant::now() + grace);
                 }
                 Some(d) if Instant::now() > d => {
@@ -146,6 +159,7 @@ fn wait(child: &mut Child, grace: Duration) -> Result<std::process::ExitStatus> 
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn describes_exits() {
         use std::os::unix::process::ExitStatusExt;

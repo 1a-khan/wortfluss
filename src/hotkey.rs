@@ -1,16 +1,28 @@
-//! Global hotkey: reads key events straight from the keyboards in /dev/input.
-//! Works on any desktop (GNOME/KDE/Wayland/X11) since it bypasses the compositor.
-//! (Linux only. A Windows port uses a low-level keyboard hook instead.)
+//! Global hotkey, session key and keyboard shortcuts, the same on every system. The
+//! operating system part only delivers raw key events from all keyboards:
+//!   Linux:   linux/hotkey.rs, reads /dev/input (evdev) directly, works on Wayland and X11
+//!   Windows: windows/hotkey.rs, a low-level keyboard hook (no permissions needed)
+//! Keys use the Linux key names and numbers on both ("KEY_RIGHTCTRL"), so config.toml
+//! means the same everywhere.
 
-use crate::typer::DEVICE_NAME;
-use anyhow::{bail, Result};
-use evdev::{InputEventKind, Key};
-use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex};
+use anyhow::Result;
+use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Duration;
+
+#[cfg(target_os = "linux")]
+#[path = "linux/hotkey.rs"]
+mod os;
+#[cfg(windows)]
+#[path = "windows/hotkey.rs"]
+mod os;
+
+pub use os::{keyboard_count, Key};
+
+/// Key event values, as Linux numbers them.
+const UP: i32 = 0;
+const DOWN: i32 = 1;
+const REPEAT: i32 = 2;
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -30,26 +42,6 @@ pub enum Event {
     SessionKey,
     /// A keyboard shortcut or tray menu entry.
     Shortcut(Action),
-}
-
-const PERMISSION_HELP: &str = "no keyboard could be opened. Your user needs read access to \
-    /dev/input (the `input` group). Run the one-time permission setup from README.md, \
-    then log out and back in";
-
-fn keyboards() -> Vec<evdev::Device> {
-    evdev::enumerate()
-        .map(|(_, d)| d)
-        .filter(|d| d.name() != Some(DEVICE_NAME))
-        .filter(|d| {
-            d.supported_keys()
-                .is_some_and(|k| k.contains(Key::KEY_A) || k.contains(Key::KEY_F9))
-        })
-        .collect()
-}
-
-/// Number of keyboards vtt can read (0 = no permission).
-pub fn keyboard_count() -> usize {
-    keyboards().len()
 }
 
 /// Something to do, triggered by a keyboard shortcut or the tray menu.
@@ -149,180 +141,91 @@ impl Mods {
     }
 }
 
-pub fn listen(
+/// Turns raw key events into vtt events (hotkey down/up, session key, shortcuts).
+struct Dispatcher {
     hotkey: Key,
     session_key: Option<Key>,
     shortcuts: Vec<(Combo, Action)>,
-    tx: Sender<Event>,
-) -> Result<usize> {
-    // Supervision (OTP-style, at thread level): a manager attaches a reader to every
-    // keyboard and re-attaches it when its reader ends (keyboard unplugged, read error,
-    // crash). It also picks up keyboards plugged in later.
-    let watched: Arc<Mutex<HashSet<PathBuf>>> = Arc::default();
-    let attach = {
-        let watched = watched.clone();
-        move || -> usize {
-            let mut added = 0;
-            for (path, dev) in evdev::enumerate() {
-                let usable = dev.name() != Some(DEVICE_NAME)
-                    && dev.supported_keys().is_some_and(|k| k.contains(hotkey));
-                if !usable || !watched.lock().unwrap().insert(path.clone()) {
-                    continue;
-                }
-                let (tx, shortcuts, watched) = (tx.clone(), shortcuts.clone(), watched.clone());
-                thread::spawn(move || {
-                    // Removes the keyboard from the watched set however the reader ends,
-                    // so the manager attaches it again.
-                    struct Detach(Arc<Mutex<HashSet<PathBuf>>>, PathBuf);
-                    impl Drop for Detach {
-                        fn drop(&mut self) {
-                            if let Ok(mut w) = self.0.lock() {
-                                w.remove(&self.1);
-                            }
-                        }
-                    }
-                    let _detach = Detach(watched, path);
-                    read_keyboard(dev, hotkey, session_key, &shortcuts, &tx);
-                });
-                added += 1;
-            }
-            added
-        }
-    };
-    let count = attach();
-    if count == 0 {
-        bail!(PERMISSION_HELP);
-    }
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_secs(3));
-        let added = attach();
-        if added > 0 {
-            eprintln!("keyboard(s) attached: {added}");
-        }
-    });
-    Ok(count)
+    mods: Mods,
 }
 
-/// Read one keyboard until it fails or disappears.
-fn read_keyboard(
-    mut dev: evdev::Device,
-    hotkey: Key,
-    session_key: Option<Key>,
-    shortcuts: &[(Combo, Action)],
-    tx: &Sender<Event>,
-) {
-    let mut mods = Mods::default();
-    loop {
-        let events = match dev.fetch_events() {
-            Ok(events) => events,
-            Err(e) => {
-                eprintln!("keyboard detached: {e}");
-                return;
+impl Dispatcher {
+    fn handle(&mut self, k: Key, value: i32) -> Vec<Event> {
+        if value != REPEAT {
+            self.mods.update(k, value == DOWN);
+        }
+        let mut out = Vec::new();
+        if Some(k) == self.session_key {
+            if value == DOWN {
+                out.push(Event::SessionKey);
             }
-        };
-        for ev in events {
-            let InputEventKind::Key(k) = ev.kind() else { continue };
-            if ev.value() != 2 {
-                mods.update(k, ev.value() == 1);
+        } else if k == self.hotkey {
+            match value {
+                DOWN => out.push(Event::Down),
+                UP => out.push(Event::Up),
+                _ => {} // auto-repeat
             }
-            let mut out = Vec::new();
-            if Some(k) == session_key {
-                if ev.value() == 1 {
-                    out.push(Event::SessionKey);
-                }
-            } else if k == hotkey {
-                match ev.value() {
-                    1 => out.push(Event::Down),
-                    0 => out.push(Event::Up),
-                    _ => {} // auto-repeat
-                }
-            } else if ev.value() == 1 && k.code() < 0x100 {
-                out.push(Event::OtherKey); // keyboard keys only, not mouse buttons
-                if let Some((_, action)) = shortcuts.iter().find(|(c, _)| mods.matches(c, k)) {
-                    out.push(Event::Shortcut(action.clone()));
-                }
+        } else if value == DOWN && k.code() < 0x100 {
+            out.push(Event::OtherKey); // keyboard keys only, not mouse buttons
+            if let Some((_, action)) = self.shortcuts.iter().find(|(c, _)| self.mods.matches(c, k)) {
+                out.push(Event::Shortcut(action.clone()));
             }
-            for e in out {
+        }
+        out
+    }
+}
+
+/// Watch the keyboards and send hotkey, session key and shortcut events to `tx`.
+/// Returns the number of keyboards (Windows: 1, the hook sees all of them).
+pub fn listen(hotkey: Key, session_key: Option<Key>, shortcuts: Vec<(Combo, Action)>, tx: Sender<Event>) -> Result<usize> {
+    let keys = os::subscribe(Some(hotkey))?;
+    let mut d = Dispatcher { hotkey, session_key, shortcuts, mods: Mods::default() };
+    thread::spawn(move || {
+        for (k, value) in keys {
+            for e in d.handle(k, value) {
                 if tx.send(e).is_err() {
                     return;
                 }
             }
         }
-    }
+    });
+    Ok(keyboard_count().max(1))
 }
 
 /// Wait for a key combination (setup). Returns when a non-modifier key is pressed.
 pub fn capture_combo() -> Result<Combo> {
-    let (tx, rx) = mpsc::channel();
-    let mut count = 0;
-    for mut dev in keyboards() {
-        let tx = tx.clone();
-        thread::spawn(move || {
-            let mut mods = Mods::default();
-            loop {
-                let Ok(events) = dev.fetch_events() else { return };
-                for ev in events {
-                    let InputEventKind::Key(k) = ev.kind() else { continue };
-                    if ev.value() == 2 {
-                        continue;
-                    }
-                    let is_mod = mods.update(k, ev.value() == 1);
-                    if !is_mod && ev.value() == 1 && k.code() < 0x100 {
-                        let c = Combo {
-                            ctrl: mods.ctrl > 0,
-                            alt: mods.alt > 0,
-                            shift: mods.shift > 0,
-                            meta: mods.meta > 0,
-                            key: Some(k),
-                        };
-                        if tx.send(c).is_err() {
-                            return;
-                        }
-                    }
-                }
-            }
-        });
-        count += 1;
-    }
-    if count == 0 {
-        bail!(PERMISSION_HELP);
-    }
-    drop(tx);
+    let keys = os::subscribe(None)?;
+    // Ignore the Enter that answered the previous question.
     thread::sleep(Duration::from_millis(300));
-    while rx.try_recv().is_ok() {}
-    let c = rx.recv()?;
-    thread::sleep(Duration::from_millis(400));
+    while keys.try_recv().is_ok() {}
+    let mut mods = Mods::default();
+    let combo = loop {
+        let (k, value) = keys.recv()?;
+        if value == REPEAT {
+            continue;
+        }
+        let is_mod = mods.update(k, value == DOWN);
+        if !is_mod && value == DOWN && k.code() < 0x100 {
+            break Combo { ctrl: mods.ctrl > 0, alt: mods.alt > 0, shift: mods.shift > 0, meta: mods.meta > 0, key: Some(k) };
+        }
+    };
+    thread::sleep(Duration::from_millis(400)); // let it be released
     crate::platform::flush_terminal_input();
-    Ok(c)
+    Ok(combo)
 }
 
 /// Wait for the user to press a key and return it (for `vtt setup`).
 pub fn capture() -> Result<Key> {
-    let (tx, rx) = mpsc::channel();
-    let mut count = 0;
-    for mut dev in keyboards() {
-        let tx = tx.clone();
-        thread::spawn(move || loop {
-            let Ok(events) = dev.fetch_events() else { return };
-            for ev in events {
-                if let InputEventKind::Key(k) = ev.kind() {
-                    if ev.value() == 1 && k.code() < 0x100 && tx.send(k).is_err() {
-                        return;
-                    }
-                }
-            }
-        });
-        count += 1;
-    }
-    if count == 0 {
-        bail!(PERMISSION_HELP);
-    }
-    drop(tx);
-    // Ignore the Enter that answered the previous question.
+    let keys = os::subscribe(None)?;
     thread::sleep(Duration::from_millis(300));
-    while rx.try_recv().is_ok() {}
-    let key = rx.recv()?;
-    thread::sleep(Duration::from_millis(400)); // let it be released
+    while keys.try_recv().is_ok() {}
+    let key = loop {
+        let (k, value) = keys.recv()?;
+        if value == DOWN && k.code() < 0x100 {
+            break k;
+        }
+    };
+    thread::sleep(Duration::from_millis(400));
     crate::platform::flush_terminal_input();
     Ok(key)
 }

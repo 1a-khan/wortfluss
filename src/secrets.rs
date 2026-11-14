@@ -111,16 +111,32 @@ fn try_keyring_key(create: bool) -> Result<Option<[u8; 32]>> {
     }
 }
 
-/// Fallback master key, bound to this computer and user.
-fn machine_key() -> Result<[u8; 32]> {
-    use sha2::{Digest, Sha256};
+/// This computer's id and the user's, for the fallback key.
+#[cfg(unix)]
+fn machine_and_user() -> Result<(String, u32)> {
     let id = ["/etc/machine-id", "/var/lib/dbus/machine-id"]
         .iter()
         .find_map(|p| std::fs::read_to_string(p).ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .context("this computer has no machine id")?;
-    let uid = unsafe { libc::getuid() };
+    Ok((id, unsafe { libc::getuid() }))
+}
+
+/// Windows: the installation's MachineGuid, and a number derived from the user's profile
+/// folder (the fallback is only used when the Credential Manager doesn't work).
+#[cfg(windows)]
+fn machine_and_user() -> Result<(String, u32)> {
+    let id = crate::platform::machine_guid().context("this computer has no MachineGuid")?;
+    let profile = std::env::var("USERPROFILE").unwrap_or_default().to_lowercase();
+    let user = profile.bytes().fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619));
+    Ok((id, user))
+}
+
+/// Fallback master key, bound to this computer and user.
+fn machine_key() -> Result<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    let (id, uid) = machine_and_user()?;
     let mut h = Sha256::new();
     h.update(b"vtt machine-bound secrets v1\0");
     h.update(id.as_bytes());

@@ -2,11 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
 
 jobs:
-  build-and-test:
+  linux:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -23,3 +23,37 @@ jobs:
         with:
           name: vtt-linux-x86_64
           path: target/release/vtt
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked
+      - name: Test
+        run: cargo test --release --locked
+      - name: Smoke test (help, version, icon)
+        shell: pwsh
+        run: |
+          target\release\vtt.exe version
+          target\release\vtt.exe help | Select-Object -First 5
+          target\release\vtt.exe _icons installer
+          if (-not (Test-Path installer\wortfluss.ico)) { throw "icon missing" }
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          & $iscc "/DAppVersion=$version" "/DBinDir=..\target\release" installer\wortfluss.iss
+          if ($LASTEXITCODE -ne 0) { throw "installer build failed" }
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: wortfluss-windows-x86_64
+          path: |
+            installer/Output/*.exe
+            target/release/vtt.exe
+            target/release/wortfluss.exe

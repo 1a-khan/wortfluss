@@ -125,6 +125,38 @@ pub fn write_png(path: &std::path::Path, size: u32, state: State, app: bool) -> 
     Ok(())
 }
 
+/// A Windows .ico with the app icon at 16-256 px (PNG inside, Windows Vista and later).
+pub fn write_ico(path: &std::path::Path) -> anyhow::Result<()> {
+    let sizes = [16u32, 24, 32, 48, 64, 256];
+    let mut images = Vec::new();
+    for &s in &sizes {
+        let mut png_data = Vec::new();
+        let mut enc = png::Encoder::new(&mut png_data, s, s);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header()?.write_image_data(&rgba(s, State::Ready, true))?;
+        images.push(png_data);
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0, 0, 1, 0]);
+    out.extend_from_slice(&(sizes.len() as u16).to_le_bytes());
+    let mut offset = 6 + 16 * sizes.len() as u32;
+    for (&s, img) in sizes.iter().zip(&images) {
+        let side = if s >= 256 { 0 } else { s as u8 };
+        out.extend_from_slice(&[side, side, 0, 0]);
+        out.extend_from_slice(&1u16.to_le_bytes()); // planes
+        out.extend_from_slice(&32u16.to_le_bytes()); // bits per pixel
+        out.extend_from_slice(&(img.len() as u32).to_le_bytes());
+        out.extend_from_slice(&offset.to_le_bytes());
+        offset += img.len() as u32;
+    }
+    for img in images {
+        out.extend_from_slice(&img);
+    }
+    std::fs::write(path, out)?;
+    Ok(())
+}
+
 /// The app icon as a PNG file (for notifications and the desktop entry); written once.
 pub fn app_icon_path() -> Option<std::path::PathBuf> {
     let path = crate::platform::data_dir().ok()?.join("wortfluss.png");

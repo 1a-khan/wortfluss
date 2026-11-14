@@ -175,7 +175,7 @@ pub fn stop() -> Result<()> {
         return Ok(());
     };
     println!("Stopping: transcribing the last piece and writing notes (can take up to a minute)...");
-    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    platform::request_stop(pid)?;
     // Done when the transcript is complete (state file gone) or the process has ended.
     let until = Instant::now() + Duration::from_secs(300);
     while current_file().is_some() && platform::running_pid_named(LOCK).is_some() {
@@ -551,22 +551,8 @@ fn ask_delete_audio(transcript: &Path, files: &[PathBuf], cfg: &Config, saved: &
         transcript.display(),
         cfg.session_audio_days
     );
-    let (tx, rx) = mpsc::channel();
-    let shown = crate::notification()
-        .summary("Wortfluss: delete the session audio?")
-        .body(&body)
-        .action("delete", "Delete audio")
-        .action("keep", "Keep for now")
-        .timeout(notify_rust::Timeout::Never)
-        .show();
-    let Ok(handle) = shown else { return };
-    thread::spawn(move || {
-        handle.wait_for_action(|action| {
-            let _ = tx.send(action.to_string());
-        })
-    });
-    // Wait for an answer, at most an hour; no answer keeps the audio until it expires.
-    if let Ok(answer) = rx.recv_timeout(Duration::from_secs(3600)) {
+    let answer = ask_delete(&body);
+    if let Some(answer) = answer {
         if answer == "delete" {
             for f in files {
                 let _ = std::fs::remove_file(f);
@@ -576,6 +562,39 @@ fn ask_delete_audio(transcript: &Path, files: &[PathBuf], cfg: &Config, saved: &
             println!("Session audio kept.");
         }
     }
+}
+
+/// Windows: a small dialog (Yes = delete). No answer within the hour keeps the audio.
+#[cfg(windows)]
+fn ask_delete(body: &str) -> Option<String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONQUESTION, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO};
+    let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let text = wide(&format!("{body}\n\nDelete the audio now?"));
+    let title = wide("Wortfluss: delete the session audio?");
+    let r = unsafe {
+        MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND)
+    };
+    Some(if r == IDYES { "delete" } else { "keep" }.to_string())
+}
+
+/// Linux: a notification with two buttons. No answer within the hour keeps the audio.
+#[cfg(not(windows))]
+fn ask_delete(body: &str) -> Option<String> {
+    let (tx, rx) = mpsc::channel();
+    let shown = crate::notification()
+        .summary("Wortfluss: delete the session audio?")
+        .body(body)
+        .action("delete", "Delete audio")
+        .action("keep", "Keep for now")
+        .timeout(notify_rust::Timeout::Never)
+        .show();
+    let handle = shown.ok()?;
+    thread::spawn(move || {
+        handle.wait_for_action(|action| {
+            let _ = tx.send(action.to_string());
+        })
+    });
+    rx.recv_timeout(Duration::from_secs(3600)).ok()
 }
 
 /// Delete kept session audio older than `session_audio_days`.
@@ -702,12 +721,14 @@ struct WavWriter {
 
 impl WavWriter {
     fn create(path: &Path) -> Result<Self> {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600) // contains voices
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600); // contains voices
+        }
+        let mut file = opts
             .open(path)
             .with_context(|| format!("creating {}", path.display()))?;
         file.write_all(&wav_header(0))?;

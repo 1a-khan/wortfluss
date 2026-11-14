@@ -1311,6 +1311,10 @@ fn ask_hotkey(t: &ColorfulTheme, cfg: &mut Config, want_change: bool) -> Result<
 }
 
 fn ask_layout(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
+    if cfg!(windows) {
+        println!("  Nothing to set on Windows: text is typed as characters, so every layout works.");
+        return Ok(());
+    }
     let (detected, source) = layout::detect();
     let items = [
         format!("Automatic (recommended): now {detected}, {source}"),
