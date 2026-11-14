@@ -1,6 +1,6 @@
 [package]
 name = "vtt"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Wortfluss: hold a key, speak, and the text is typed into any app; sessions transcribe lectures and meetings with notes."
 

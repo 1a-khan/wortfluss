@@ -225,20 +225,31 @@ vtt session run      supervisor: restarts a crashed session (transient child),
 - A session crash can lose the piece that was being recorded (up to ~30 s); the transcript
   marks the spot.
 
-## Windows port (planned)
+## Windows
 
-The code is split so a Windows build replaces only the OS-specific parts:
+The same program builds for Windows; only the operating-system parts differ
+(`src/linux/` and `src/windows/`, chosen at compile time):
 
-| Module | Linux now | Windows |
+| Part | Linux | Windows |
 |---|---|---|
-| `supervisor.rs` | child processes + SIGTERM | child processes + `TerminateProcess` / job object |
-| `platform.rs` | XDG paths, `.desktop` autostart, lock file, `setsid` | `%APPDATA%`, `HKCU\…\Run` key, named mutex, `DETACHED_PROCESS` |
-| `hotkey.rs` | evdev (`/dev/input`) | `SetWindowsHookEx(WH_KEYBOARD_LL)`, no permissions needed |
-| `typer.rs` + `layout.rs` | uinput + xkbcommon key mapping | `SendInput` with `KEYEVENTF_UNICODE`: any character, any layout, no mapping needed |
-| `audio.rs` | cpal (ALSA) | cpal (WASAPI), unchanged |
-| `tray.rs` | StatusNotifierItem (ksni, D-Bus) | `tray-icon` crate |
-| `mics.rs` | sound-server source list + per-source recording (PulseAudio protocol) | cpal/WASAPI devices; system audio via WASAPI loopback |
-| `setup.rs`, `config.rs`, `providers.rs`, `stt.rs`, `usage.rs` | shared | shared |
+| hotkey & shortcuts | evdev (`/dev/input`), needs the `input` group | low-level keyboard hook, no permissions |
+| typing | uinput + xkbcommon key map per layout | `SendInput` with `KEYEVENTF_UNICODE`: any character, any layout |
+| microphone | sound-server sources (PulseAudio protocol) | cpal/WASAPI devices by name |
+| system audio (sessions) | monitor of the default output | WASAPI loopback of the default output |
+| tray | StatusNotifierItem (ksni) | notification area (`tray-icon`) |
+| stop / background | SIGTERM, `setsid` | stop file, `DETACHED_PROCESS`, no console window |
+| autostart | `~/.config/autostart/vtt.desktop` | `HKCU\…\CurrentVersion\Run` → `wortfluss.exe` |
+| master key | GNOME Keyring / KWallet | Windows Credential Manager |
+| settings | `~/.config/vtt` | `%APPDATA%\Wortfluss` |
 
-For clients, Windows needs none of the permission steps above. A single `vtt.exe` plus
-`vtt setup` (or later a small settings window and tray icon) is the whole installation.
+Shared: setup, config, services, transcription, sessions, notes, speaker separation,
+supervision, usage. Config files and key names (`KEY_RIGHTCTRL`) are the same on both.
+
+**Installer** (built by CI on every push, artifact `wortfluss-windows-x86_64`):
+`Wortfluss-Setup-<version>.exe`, per user, no admin rights. Start menu entries
+*Wortfluss* (window-less launcher `wortfluss.exe`) and *Wortfluss settings* (`vtt setup`),
+optional start at login and `vtt` on the PATH, then it opens the setup. Uninstalling stops
+Wortfluss and removes autostart and PATH entries; settings and transcripts stay.
+
+Windows limits: apps running as administrator can't receive typed text; the installer is
+not code-signed yet (SmartScreen warns once). Details: `vtt help windows`.
