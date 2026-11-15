@@ -69,19 +69,40 @@ pub const TONES: &[Tone] = &[
 /// The text model's version of `text` in this tone.
 pub fn rewrite(a: &Active, model: &str, tone: &Tone, text: &str) -> Result<(String, Option<f64>)> {
     let system = format!("{BASE} {}", tone.instruction);
-    let (out, cost) = correct::chat(a, model, &system, text, 300 + text.len(), Duration::from_secs(40))?;
-    let out = out.trim().trim_matches(|c| c == '"' || c == '„' || c == '“').trim().to_string();
-    if out.is_empty() {
-        bail!("the model returned no text");
+    // Services now and then answer with nothing (or a passing provider error); asking
+    // again almost always works, so that is done here instead of by the user.
+    let mut last = anyhow::anyhow!("the model returned no text");
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(400 * attempt));
+        }
+        match correct::chat(a, model, &system, text, 300 + text.len(), Duration::from_secs(40)) {
+            Ok((out, cost)) => {
+                let out = out.trim().trim_matches(|c| c == '"' || c == '„' || c == '“').trim().to_string();
+                if !out.is_empty() {
+                    return Ok((out, cost));
+                }
+                last = anyhow::anyhow!("the model returned no text");
+            }
+            // Wrong key, unknown model and the like don't get better by asking again.
+            Err(e) if format!("{e}").starts_with("HTTP 4") && !format!("{e}").starts_with("HTTP 429") => return Err(e),
+            Err(e) => last = e,
+        }
     }
-    Ok((out, cost))
+    Err(last)
 }
 
 // ---- in the running vtt -------------------------------------------------------------
 
-/// Show the window (`vtt _rewrite`) and wait for it. Some(text) when the user chose
-/// Replace.
-pub fn ask() -> Result<Option<String>> {
+/// The text the user accepted, and (Windows) the window it was selected in.
+pub struct Accepted {
+    pub text: String,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub window: isize,
+}
+
+/// Show the window (`vtt _rewrite`) and wait for it. Some when the user chose Replace.
+pub fn ask() -> Result<Option<Accepted>> {
     let mut cmd = Command::new(std::env::current_exe()?);
     cmd.arg("_rewrite").stdin(Stdio::null()).stdout(Stdio::piped());
     crate::platform::quiet_child(&mut cmd);
@@ -94,7 +115,8 @@ pub fn ask() -> Result<Option<String>> {
     for line in out.lines() {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
             if let Some(t) = v["replace"].as_str() {
-                return Ok(Some(t.to_string()));
+                let window = v["window"].as_i64().unwrap_or(0) as isize;
+                return Ok(Some(Accepted { text: t.to_string(), window }));
             }
         }
     }
@@ -125,6 +147,10 @@ struct App {
     auto: bool,
     /// Closing: the answer is given once.
     done: bool,
+    /// When Copy was last pressed (the button says so for a moment).
+    copied: Option<Instant>,
+    /// Windows: the window the selection was copied from (0 if unknown).
+    window: isize,
 }
 
 impl App {
@@ -161,7 +187,13 @@ impl App {
         }
         self.done = true;
         if replace && !self.shown.trim().is_empty() {
-            println!("{}", serde_json::json!({ "replace": self.shown }));
+            println!("{}", serde_json::json!({ "replace": self.shown, "window": self.window }));
+            // Windows: let the running vtt bring the app with the selection back to the
+            // front (only the foreground program may hand that on).
+            #[cfg(windows)]
+            unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(u32::MAX);
+            }
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
@@ -243,8 +275,12 @@ impl eframe::App for App {
                     if ui.add_enabled(ready, egui::Button::new(t("rw.replace"))).clicked() {
                         self.finish(ctx, true);
                     }
-                    if ui.add_enabled(ready, egui::Button::new(t("rw.copy"))).clicked() {
+                    let just_copied = self.copied.is_some_and(|c| c.elapsed() < Duration::from_millis(1500));
+                    let copy_label = t(if just_copied { "rw.copied" } else { "rw.copy" });
+                    if ui.add_enabled(ready, egui::Button::new(copy_label)).clicked() {
                         ctx.copy_text(self.shown.clone());
+                        self.copied = Some(Instant::now());
+                        ctx.request_repaint_after(Duration::from_millis(1600));
                     }
                     if ui.button(t("rw.cancel")).clicked() {
                         self.finish(ctx, false);
@@ -284,6 +320,10 @@ impl eframe::App for App {
                 }
                 Some(Err(e)) => {
                     ui.colored_label(egui::Color32::from_rgb(230, 90, 90), e);
+                    if ui.button(t("rw.retry")).clicked() {
+                        let tone = self.tone;
+                        self.ask_tone(tone, ctx);
+                    }
                 }
                 Some(Ok(_)) => {
                     egui::ScrollArea::vertical().id_salt("new").show(ui, |ui| {
@@ -304,16 +344,7 @@ impl eframe::App for App {
 fn copy_selection() -> Option<String> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
     // Wait until the shortcut's keys are released (Ctrl+Alt+C would not copy).
-    let start = Instant::now();
-    while [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
-        .iter()
-        .any(|&k| unsafe { GetAsyncKeyState(k as i32) } as u16 & 0x8000 != 0)
-    {
-        if start.elapsed() > Duration::from_secs(3) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    crate::typer::wait_keys_released();
     let mut cb = arboard::Clipboard::new().ok()?;
     let before = cb.get_text().ok();
     let _ = cb.clear();
@@ -346,6 +377,41 @@ fn copy_selection() -> Option<String> {
     text
 }
 
+/// Windows (in the running vtt): put the accepted text over the selection. Pasted, not
+/// typed: one step, so autocomplete and slow apps can't mix it up, and only once the
+/// app with the selection is back in front. Otherwise the text is left in the
+/// clipboard and Err tells the user.
+#[cfg(windows)]
+pub fn paste(a: &Accepted) -> Result<()> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
+    crate::typer::wait_keys_released();
+    let target = a.window as windows_sys::Win32::Foundation::HWND;
+    let in_front = || {
+        let fg = unsafe { GetForegroundWindow() };
+        !fg.is_null() && (target.is_null() || fg == target)
+    };
+    let start = Instant::now();
+    while !in_front() && start.elapsed() < Duration::from_millis(1500) {
+        if !target.is_null() {
+            unsafe { SetForegroundWindow(target) };
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if !in_front() {
+        // Leave the text where the user can still get it.
+        if let Ok(mut cb) = arboard::Clipboard::new() {
+            let _ = cb.set_text(a.text.clone());
+        }
+        bail!("{}", t("rw.not_back"));
+    }
+    std::thread::sleep(Duration::from_millis(80)); // the app settles after getting the focus
+    match crate::typer::paste(&a.text) {
+        Ok(()) => Ok(()),
+        Err(crate::typer::Pasting::Blocked(e)) => Err(e),
+        Err(crate::typer::Pasting::NoClipboard) => bail!("the clipboard is in use by another program"),
+    }
+}
+
 /// `vtt _rewrite [--auto TONE]`: the window.
 pub fn window(args: &[String]) -> Result<()> {
     let cfg = config::load()?;
@@ -359,6 +425,10 @@ pub fn window(args: &[String]) -> Result<()> {
     let auto_tone = args.iter().position(|a| a == "--auto").and_then(|i| args.get(i + 1));
     let tone = auto_tone.and_then(|t| TONES.iter().position(|x| x.id == t)).unwrap_or(0);
 
+    #[cfg(windows)]
+    let window = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() } as isize;
+    #[cfg(not(windows))]
+    let window = 0isize;
     #[cfg(windows)]
     let original = copy_selection();
     #[cfg(not(windows))]
@@ -408,6 +478,8 @@ pub fn window(args: &[String]) -> Result<()> {
                 shown_for: None,
                 auto: auto_tone.is_some(),
                 done: false,
+                copied: None,
+                window,
             };
             if let Some(t) = original {
                 app.set_original(t, &cc.egui_ctx);

@@ -6,6 +6,7 @@ mod help;
 mod hotkey;
 mod i18n;
 mod icon;
+mod indicator;
 #[cfg(target_os = "linux")]
 #[path = "linux/layout.rs"]
 mod layout;
@@ -19,6 +20,12 @@ mod mics;
 #[path = "windows/mics.rs"]
 mod mics;
 mod notes;
+#[cfg(target_os = "linux")]
+#[path = "linux/overlay.rs"]
+mod overlay;
+#[cfg(windows)]
+#[path = "windows/overlay.rs"]
+mod overlay;
 mod platform;
 mod providers;
 mod rewrite;
@@ -110,6 +117,7 @@ fn run() -> Result<()> {
         Some("test-type") => test_type(),
         Some("test-mic") => test_mic(),
         Some("_rewrite") => rewrite::window(&args[1..]),
+        Some("_indicator-demo") => indicator::demo(),
         Some("update" | "upgrade") => update_now(),
         Some("_release-keygen") => {
             update::keygen(std::path::Path::new(args.get(1).ok_or_else(|| anyhow!("vtt _release-keygen KEYFILE"))?))
@@ -365,6 +373,27 @@ fn worker() -> Result<()> {
     }
     let rewriting = Arc::new(AtomicBool::new(false));
     watch_config(tx.clone(), reload_pending.clone());
+    let indicator = indicator::Indicator::start(cfg.indicator, busy.clone());
+    // GNOME: the bubble is drawn by a small shell extension; keep it installed and up to
+    // date while the indicator is on, remove it when switched off.
+    #[cfg(target_os = "linux")]
+    {
+        let on = cfg.indicator;
+        thread::spawn(move || {
+            let done = if on {
+                overlay::ensure_extension().map(|i| {
+                    if i == overlay::Install::NeedsLogin {
+                        info(i18n::t("ind.relogin"));
+                    }
+                })
+            } else {
+                overlay::remove_extension()
+            };
+            if let Err(e) = done {
+                eprintln!("listening indicator: {e:#}");
+            }
+        });
+    }
 
     let a = cfg.active();
     let how = if cfg.mode == Mode::Hold { "Hold" } else { "Press" };
@@ -404,6 +433,11 @@ fn worker() -> Result<()> {
         let Some(r) = rec.recorder.take() else { return };
         let clip = r.stop();
         let worth = clip.seconds() >= 0.4 && clip.has_speech();
+        if worth || rec.pieces > 0 {
+            indicator.working(); // until the text is typed
+        } else {
+            indicator.hide();
+        }
         if cfg.sounds && (worth || rec.pieces > 0) {
             audio::beep(587.0, 60);
         }
@@ -467,8 +501,14 @@ fn worker() -> Result<()> {
                     Err(e) => report(&format!("{e:#}")),
                 }
             }
-            (_, BeepDue(n)) if n == take && rec.recorder.is_some() && cfg.sounds => {
-                audio::beep(880.0, 60);
+            (_, BeepDue(n)) if n == take && rec.recorder.is_some() => {
+                // Clearly a dictation now (hold mode waits 250 ms): beep and show the bubble.
+                if let Some(r) = &rec.recorder {
+                    indicator.listen(r.level());
+                }
+                if cfg.sounds {
+                    audio::beep(880.0, 60);
+                }
             }
             (_, Tick(n)) if n == take => {
                 let Some(clip) = rec.recorder.as_ref().and_then(|r| r.take_piece(piece_min, piece_max)) else {
@@ -501,10 +541,20 @@ fn worker() -> Result<()> {
                     let (rewriting, busy, text_tx) = (rewriting.clone(), busy.clone(), text_tx.clone());
                     thread::spawn(move || {
                         match rewrite::ask() {
-                            Ok(Some(text)) => {
+                            #[cfg(windows)]
+                            Ok(Some(accepted)) => {
+                                busy.fetch_add(1, SeqCst);
+                                if let Err(e) = rewrite::paste(&accepted) {
+                                    report(&i18n::tf("err.rewrite", &[&format!("{e:#}")]));
+                                }
+                                busy.fetch_sub(1, SeqCst);
+                                let _ = &text_tx;
+                            }
+                            #[cfg(not(windows))]
+                            Ok(Some(accepted)) => {
                                 thread::sleep(Duration::from_millis(250)); // focus back to the app
                                 busy.fetch_add(1, SeqCst);
-                                if text_tx.send(text).is_err() {
+                                if text_tx.send(accepted.text).is_err() {
                                     busy.fetch_sub(1, SeqCst);
                                 }
                             }
@@ -545,6 +595,7 @@ fn worker() -> Result<()> {
                 if rec.pieces == 0 {
                     // The key was part of a shortcut (e.g. Ctrl+C): discard silently.
                     rec.recorder = None;
+                    indicator.hide();
                     current.store(0, SeqCst);
                     if let Some(t) = &tray {
                         t.update(|t| t.dictating = false);

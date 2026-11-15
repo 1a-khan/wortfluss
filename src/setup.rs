@@ -146,6 +146,7 @@ pub enum Setting {
     Mic,
     Mode,
     Sounds,
+    Indicator,
     Layout,
     Autostart,
     Session,
@@ -167,6 +168,7 @@ const SETTINGS: &[(Setting, &str, &[&str], &str)] = &[
     (Setting::Mic, "mic", &["microphone", "input", "mics"], "Microphone"),
     (Setting::Mode, "mode", &["long", "toggle", "hold", "max-seconds"], "Hold/toggle & long dictations"),
     (Setting::Sounds, "sounds", &["beep", "beeps"], "Beeps"),
+    (Setting::Indicator, "indicator", &["bubble", "wave", "listening"], "Listening bubble at the text cursor"),
     (Setting::Layout, "layout", &["keyboard"], "Keyboard layout"),
     (Setting::Autostart, "autostart", &["login", "startup"], "Start at login"),
     (Setting::Session, "session", &["sessions", "notes", "lecture", "meeting"], "Session mode (lectures, meetings)"),
@@ -214,6 +216,7 @@ fn current_value(cfg: &Config, s: Setting) -> String {
             duration_text(cfg.max_seconds)
         ),
         Setting::Sounds => if cfg.sounds { "on".into() } else { "off".into() },
+        Setting::Indicator => if cfg.indicator { "on".into() } else { "off".into() },
         Setting::Layout => {
             if cfg.layout_is_auto() { format!("automatic (now {})", layout::detect().0) } else { layout::resolve(cfg).to_string() }
         }
@@ -306,6 +309,29 @@ pub fn set(name: Option<&str>) -> Result<()> {
     save_now(&cfg)
 }
 
+/// Menu lines cut to the terminal's width: a line that wraps makes the menu redraw
+/// itself below the old one again and again on every key press.
+fn fit(labels: &[String]) -> Vec<String> {
+    let width = dialoguer::console::Term::stdout().size().1 as usize;
+    let max = width.saturating_sub(6).max(20); // "  ❯ " in front, one spare column
+    labels
+        .iter()
+        .map(|l| {
+            if dialoguer::console::measure_text_width(l) <= max {
+                l.clone()
+            } else {
+                dialoguer::console::truncate_str(l, max, "…").into_owned()
+            }
+        })
+        .collect()
+}
+
+/// How many menu lines fit in the terminal (prompt, page line and a spare line besides).
+fn rows(wanted: usize) -> usize {
+    let height = dialoguer::console::Term::stdout().size().0 as usize;
+    wanted.min(height.saturating_sub(4)).max(3)
+}
+
 fn menu() -> Result<()> {
     let t = ColorfulTheme::default();
     let mut cfg = load_for_setup();
@@ -319,9 +345,9 @@ fn menu() -> Result<()> {
         labels.push("Done".into());
         let i = Select::with_theme(&t)
             .with_prompt("What do you want to change?")
-            .items(&labels)
+            .items(fit(&labels))
             .default(labels.len() - 1)
-            .max_length(16)
+            .max_length(rows(16))
             .interact()?;
         if i == labels.len() - 1 {
             return Ok(());
@@ -363,6 +389,16 @@ fn change(t: &ColorfulTheme, cfg: &mut Config, s: Setting) -> Result<()> {
                 .with_prompt("Beep when recording starts and stops?")
                 .default(cfg.sounds)
                 .interact()?
+        }
+        Setting::Indicator => {
+            cfg.indicator = Confirm::with_theme(t)
+                .with_prompt("Show a small sound wave next to the text cursor while listening?")
+                .default(cfg.indicator)
+                .interact()?;
+            #[cfg(target_os = "linux")]
+            if cfg.indicator && crate::overlay::is_gnome() {
+                println!("  GNOME draws it with a small Wortfluss extension. Log out and back in once to see it.");
+            }
         }
         Setting::Layout => ask_layout(t, cfg)?,
         Setting::Autostart => {
@@ -1144,12 +1180,12 @@ fn ask_model(
         Pick::Keep => current,
         Pick::Recommended(id) => id.to_string(),
         Pick::List => {
-            let labels: Vec<&str> = entries.iter().map(|(_, l)| l.as_str()).collect();
+            let labels: Vec<String> = entries.iter().map(|(_, l)| l.clone()).collect();
             let j = FuzzySelect::with_theme(t)
                 .with_prompt("Type to filter, arrows to move, Enter to choose")
-                .items(&labels)
+                .items(fit(&labels))
                 .default(entries.iter().position(|(id, _)| *id == current).unwrap_or(0))
-                .max_length(15)
+                .max_length(rows(15))
                 .interact()?;
             entries[j].0.clone()
         }
@@ -1227,12 +1263,12 @@ fn ask_correction(t: &ColorfulTheme, cfg: &mut Config, p: &providers::Provider) 
             if entries.is_empty() {
                 Input::with_theme(t).with_prompt("Model name").default(current).interact_text()?
             } else {
-                let labels: Vec<&str> = entries.iter().map(|(_, l)| l.as_str()).collect();
+                let labels: Vec<String> = entries.iter().map(|(_, l)| l.clone()).collect();
                 let j = FuzzySelect::with_theme(t)
                     .with_prompt("Type to filter, arrows to move, Enter to choose")
-                    .items(&labels)
+                    .items(fit(&labels))
                     .default(entries.iter().position(|(id, _)| *id == current).unwrap_or(0))
-                    .max_length(15)
+                    .max_length(rows(15))
                     .interact()?;
                 entries[j].0.clone()
             }

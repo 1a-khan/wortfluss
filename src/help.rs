@@ -29,8 +29,8 @@ REWRITE SELECTED TEXT (like the writing assistant on phones)
 COMMANDS
     vtt setup        menu of all settings with current values; change one at a time
     vtt set <what>   change one thing directly: service, model, key, correction, phrases,
-                     language, mic, hotkey, mode, sounds, layout, autostart, session,
-                     shortcuts, advanced
+                     language, mic, hotkey, mode, sounds, indicator, layout, autostart,
+                     session, ui-language, shortcuts, advanced
     vtt phrases      list names/words to spell right; vtt phrases add \"A, B\" / remove \"A\"
     vtt check        test everything vtt needs and show how to fix problems
     vtt start        start in the background        vtt stop    stop it
@@ -141,6 +141,8 @@ you don't pay for silence. Toggle mode stops by itself after 60 s without speech
 If the internet drops, unsent pieces are saved; `vtt retry` transcribes them later.
 
 Beeps: high beep = recording, low beep = sent (`vtt set sounds`).
+While listening, a small sound wave appears next to the text cursor; grey dots = turning
+speech into text (`vtt set indicator`; on GNOME after logging out and in once).
 ";
 
 const LAYOUT: &str = "\
