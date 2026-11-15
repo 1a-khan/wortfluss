@@ -4703,6 +4703,8 @@ dependencies = [
  "ureq",
  "windows-sys 0.61.2",
  "xkbcommon",
+ "zbus 5.19.0",
+ "zvariant",
 ]
 
 [[package]]

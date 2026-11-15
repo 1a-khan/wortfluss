@@ -54,7 +54,7 @@ pub fn detect() -> (Layout, &'static str) {
     )
 }
 
-fn dconf_user_db() -> Option<PathBuf> {
+pub fn dconf_user_db() -> Option<PathBuf> {
     let base = match std::env::var_os("XDG_CONFIG_HOME") {
         Some(d) if !d.is_empty() => PathBuf::from(d),
         _ => PathBuf::from(std::env::var_os("HOME")?).join(".config"),

@@ -1,0 +1,8 @@
+{
+  "uuid": "wortfluss@miak-it.de",
+  "name": "Wortfluss",
+  "description": "Shows a small sound wave next to the text cursor while Wortfluss is listening. Installed and used by the Wortfluss dictation app.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/1a-khan/wortfluss",
+  "version-name": "1"
+}

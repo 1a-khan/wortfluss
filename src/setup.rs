@@ -146,6 +146,7 @@ pub enum Setting {
     Mic,
     Mode,
     Sounds,
+    Indicator,
     Layout,
     Autostart,
     Session,
@@ -167,6 +168,7 @@ const SETTINGS: &[(Setting, &str, &[&str], &str)] = &[
     (Setting::Mic, "mic", &["microphone", "input", "mics"], "Microphone"),
     (Setting::Mode, "mode", &["long", "toggle", "hold", "max-seconds"], "Hold/toggle & long dictations"),
     (Setting::Sounds, "sounds", &["beep", "beeps"], "Beeps"),
+    (Setting::Indicator, "indicator", &["bubble", "wave", "listening"], "Listening bubble at the text cursor"),
     (Setting::Layout, "layout", &["keyboard"], "Keyboard layout"),
     (Setting::Autostart, "autostart", &["login", "startup"], "Start at login"),
     (Setting::Session, "session", &["sessions", "notes", "lecture", "meeting"], "Session mode (lectures, meetings)"),
@@ -214,6 +216,7 @@ fn current_value(cfg: &Config, s: Setting) -> String {
             duration_text(cfg.max_seconds)
         ),
         Setting::Sounds => if cfg.sounds { "on".into() } else { "off".into() },
+        Setting::Indicator => if cfg.indicator { "on".into() } else { "off".into() },
         Setting::Layout => {
             if cfg.layout_is_auto() { format!("automatic (now {})", layout::detect().0) } else { layout::resolve(cfg).to_string() }
         }
@@ -363,6 +366,16 @@ fn change(t: &ColorfulTheme, cfg: &mut Config, s: Setting) -> Result<()> {
                 .with_prompt("Beep when recording starts and stops?")
                 .default(cfg.sounds)
                 .interact()?
+        }
+        Setting::Indicator => {
+            cfg.indicator = Confirm::with_theme(t)
+                .with_prompt("Show a small sound wave next to the text cursor while listening?")
+                .default(cfg.indicator)
+                .interact()?;
+            #[cfg(target_os = "linux")]
+            if cfg.indicator && crate::overlay::is_gnome() {
+                println!("  GNOME draws it with a small Wortfluss extension. Log out and back in once to see it.");
+            }
         }
         Setting::Layout => ask_layout(t, cfg)?,
         Setting::Autostart => {

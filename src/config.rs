@@ -73,6 +73,8 @@ pub struct Config {
     pub auto_update: bool,
     /// Show the tray icon.
     pub tray: bool,
+    /// Show a small sound wave next to the text cursor while listening.
+    pub indicator: bool,
     pub max_seconds: u64,
     /// Long recordings are sent in pieces of about this many seconds, cut at a pause.
     pub piece_seconds: u64,
@@ -124,6 +126,7 @@ impl Default for Config {
             ui_language: "auto".into(),
             auto_update: true,
             tray: true,
+            indicator: true,
             max_seconds: 120,
             piece_seconds: 30,
             add_trailing_space: true,
@@ -417,6 +420,10 @@ mode = "{mode}"
 # Short beep when recording starts and stops
 sounds = {sounds}
 
+# Small sound wave next to the text cursor while listening (on GNOME through a small
+# extension that vtt installs; it appears after logging out and in once)
+indicator = {indicator}
+
 # Keyboard layout used to type the text. "auto" = follow the desktop, including
 # switching layouts. Or set one, e.g. keyboard_layout = "de", keyboard_variant = "nodeadkeys"
 keyboard_layout = {layout}
@@ -480,6 +487,7 @@ key_delay_ms = {delay}
         hotkey = q(&c.hotkey),
         mic = q(&c.mic),
         sounds = c.sounds,
+        indicator = c.indicator,
         layout = q(&c.keyboard_layout),
         variant = q(&c.keyboard_variant),
         max_seconds = c.max_seconds,
