@@ -188,9 +188,7 @@ pub fn swap(m: &Manifest) -> Result<()> {
         let target = dir.join(&f.name);
         if cfg!(windows) && target.exists() {
             // A running .exe can't be replaced, but it can be renamed.
-            let old = dir.join(format!("{}.old", f.name));
-            let _ = std::fs::remove_file(&old);
-            std::fs::rename(&target, &old).with_context(|| format!("moving {} aside", target.display()))?;
+            move_aside(&dir, &f.name, &target)?;
         }
         std::fs::rename(staged(&dir, &f.name), &target).with_context(|| format!("installing {}", target.display()))?;
     }
@@ -199,18 +197,50 @@ pub fn swap(m: &Manifest) -> Result<()> {
     Ok(())
 }
 
-/// Remove what an earlier update left behind (`*.old`, unfinished `*.new`).
+/// Windows: rename `target` (maybe running) to `NAME.old`. If an `NAME.old` from an
+/// earlier update can't be deleted (a process still runs from it), renaming onto it
+/// fails with "access denied": then a free name `NAME.old-2`, `NAME.old-3` ... is used.
+/// A virus scanner may hold a fresh file for a moment, so each name is tried a few times.
+fn move_aside(dir: &Path, name: &str, target: &Path) -> Result<()> {
+    let mut last = None;
+    for attempt in 0..10 {
+        for n in 1..20 {
+            let old = if n == 1 { dir.join(format!("{name}.old")) } else { dir.join(format!("{name}.old-{n}")) };
+            if old.exists() && std::fs::remove_file(&old).is_err() {
+                continue; // in use: try the next name
+            }
+            match std::fs::rename(target, &old) {
+                Ok(()) => return Ok(()),
+                Err(e) => last = Some(e),
+            }
+        }
+        if attempt < 9 {
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    }
+    Err(last.map(anyhow::Error::from).unwrap_or_else(|| anyhow!("no free name")))
+        .with_context(|| format!("moving {} aside (close Wortfluss with `vtt stop` and try again)", target.display()))
+}
+
+/// Remove what an earlier update left behind (`*.old`, `*.old-N`, unfinished `*.new`).
 pub fn cleanup() {
     let Ok(dir) = install_dir() else { return };
     let Ok(entries) = std::fs::read_dir(&dir) else { return };
     let ours = ["vtt", "vtt.exe", "wortfluss.exe"];
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        let base = name.strip_suffix(".old").or_else(|| name.strip_suffix(".new"));
-        if base.is_some_and(|b| ours.contains(&b)) {
+        if leftover_of(&name).is_some_and(|b| ours.contains(&b)) {
             let _ = std::fs::remove_file(e.path());
         }
     }
+}
+
+/// "vtt.exe" for "vtt.exe.old", "vtt.exe.old-3" or "vtt.exe.new"; None for other names.
+fn leftover_of(name: &str) -> Option<&str> {
+    name.rsplit_once(".old")
+        .filter(|(_, rest)| rest.is_empty() || rest.strip_prefix('-').is_some_and(|n| n.parse::<u32>().is_ok()))
+        .map(|(b, _)| b)
+        .or_else(|| name.strip_suffix(".new"))
 }
 
 // ---- release side: `vtt _release-keygen`, `vtt _release-sign` ----------------------
@@ -278,6 +308,16 @@ pub fn sign_release(args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leftovers_are_recognised() {
+        assert_eq!(leftover_of("vtt.exe.old"), Some("vtt.exe"));
+        assert_eq!(leftover_of("vtt.exe.old-3"), Some("vtt.exe"));
+        assert_eq!(leftover_of("wortfluss.exe.new"), Some("wortfluss.exe"));
+        assert_eq!(leftover_of("vtt.exe"), None);
+        assert_eq!(leftover_of("vtt.exe.old-x"), None);
+        assert_eq!(leftover_of("notes.older"), None);
+    }
 
     #[test]
     fn versions() {

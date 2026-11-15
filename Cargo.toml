@@ -1,6 +1,6 @@
 [package]
 name = "vtt"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 authors = ["Ammad Khan (MIAK IT)"]
 license = "Apache-2.0"
