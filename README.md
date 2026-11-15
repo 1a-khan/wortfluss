@@ -8,6 +8,10 @@ has focus: browser, chat, editor, terminal. Works with Groq, OpenAI, Mistral or 
 One self-contained binary: records the mic, calls the speech service over HTTPS and types
 through its own virtual keyboard. No ydotool, xdotool or clipboard tools. Wayland and X11.
 
+**Download:** [latest release](https://github.com/1a-khan/wortfluss/releases/latest)
+(Windows installer `Wortfluss-Setup-<version>.exe`, Linux `vtt-linux-x86_64`).
+**Step-by-step guide for users:** [English](docs/INSTALL.md) · [Deutsch](docs/INSTALL.de.md).
+
 ## Quick start
 
 ```bash
