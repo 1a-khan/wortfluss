@@ -2,11 +2,12 @@
 
 _Command: `vtt`._
 
-Hold **Right Ctrl** (or a key you choose), speak, let go. The text is typed into whatever app
+Hold **Right Ctrl** (or a key you choose), speak, let go. The text appears in whatever app
 has focus: browser, chat, editor, terminal. Works with Groq, OpenAI, Mistral or your own server.
 
-One self-contained binary: records the mic, calls the speech service over HTTPS and types
-through its own virtual keyboard. No ydotool, xdotool or clipboard tools. Wayland and X11.
+One self-contained binary: records the mic, calls the speech service over HTTPS and pastes
+the text (your clipboard is put back) or types it through its own virtual keyboard. No
+ydotool, xdotool or clipboard tools. Wayland and X11.
 
 **Download:** [latest release](https://github.com/1a-khan/wortfluss/releases/latest)
 (Windows installer `Wortfluss-Setup-<version>.exe`, Linux `vtt-linux-x86_64`).
@@ -120,18 +121,39 @@ live, with `[hh:mm:ss]` times, and writes notes at the top when the session stop
 
 While Wortfluss listens, a small bubble with a live sound wave appears right next to the
 text cursor, so you see at a glance that it is taking dictation (and that the mic hears
-you). After you stop, the bars turn into grey moving dots until the text is typed.
+you). After you stop, the bars turn into grey moving dots until the text is in.
 
 - Hold mode shows it after 250 ms, so shortcuts like Ctrl+C don't flash it.
 - **Windows:** works in apps that report their text cursor (most classic Windows apps);
   elsewhere the bubble sits at the bottom center of the screen.
 - **Linux (GNOME):** apps can't place windows next to another app's cursor on Wayland, so
   Wortfluss installs a tiny GNOME Shell extension (`wortfluss@mail.miak-it.com`) that draws the
-  bubble. It finds the cursor through the accessibility interface (GTK apps, LibreOffice,
-  Firefox...); elsewhere it uses the bottom center. **Log out and in once** after the first
-  start so GNOME loads it. Other desktops: no bubble (tray icon and beeps still work).
-- Off: `vtt set indicator` (on GNOME this also removes the extension).
+  bubble (the same extension also pastes, see below). It finds the cursor through the
+  accessibility interface (GTK apps, LibreOffice, Firefox...); elsewhere it uses the bottom
+  center. **Log out and in once** after the first start, and after updates that change the
+  extension, so GNOME loads it. Other desktops: no bubble (tray icon and beeps still work).
+- Off: `vtt set indicator`. On GNOME the extension is removed only when pasting is off too.
 - Preview without speaking: `vtt _indicator-demo`.
+
+## Pasting or typing
+
+By default the text is **pasted**: Wortfluss puts it on the clipboard, presses the paste
+keys and then puts your clipboard back (after about half a second). That is fast, even for
+long texts, and works with any keyboard layout and script (umlauts, Turkish, Urdu, emoji).
+
+- **Windows:** clipboard and Ctrl+V. The text is kept out of the clipboard history (Win+V);
+  your previous text or image is restored. Typing key by key garbled text in some apps
+  (Windows 11 Notepad repeated letters), which pasting avoids.
+- **Linux (GNOME):** on Wayland only the desktop itself may set the clipboard for another
+  app, so the Wortfluss GNOME extension (the one that draws the bubble) does it and presses
+  Ctrl+V, or **Ctrl+Shift+V in terminals** (GNOME Terminal, Ptyxis, Console, kitty,
+  Alacritty, foot, WezTerm, Ghostty, Konsole, Tilix, ...). Only text can be put back on the
+  clipboard; a copied image is replaced. Other desktops, or before the next login after an
+  update: the text is typed as before.
+- **Typing instead:** `vtt set paste` → off (or `paste = false` in config.toml). Then text
+  is typed key by key through the virtual keyboard (Linux) or Unicode key events (Windows);
+  `key_delay_ms` slows it down for apps that drop characters.
+- Test without speaking: `vtt test-type` says *Done (pasted)* or *Done (typed)*.
 
 ## Rewrite selected text (writing assistant)
 
@@ -148,8 +170,10 @@ text already suggested. Pick a tone with the mouse or the keys 1–6:
 | 5 | #social | short social media post with hashtags |
 | 6 | Emojis hinzufügen / Add emojis | same text with fitting emojis |
 
-The suggestion can be edited. **Enter** (*Ersetzen*) types it over the selection like dictated
-text; line breaks are typed as Shift+Enter, so chat apps don't send early. *Kopieren* puts it on
+The suggestion can be edited. **Enter** (*Ersetzen*) puts it over the selection like dictated
+text (pasted, or typed when pasting is off; typed line breaks are Shift+Enter, so chat apps
+don't send early). On Windows it waits until the app with the selection is in front again;
+if it is gone, the new text is left on the clipboard. *Kopieren* puts it on
 the clipboard, **Esc** cancels. The text keeps its language and is never answered or acted on.
 It uses the text model of `vtt set correction` (also when correction itself is off): about
 $0.0001 per suggestion. How the selection is read: Linux uses the primary selection (anything
@@ -246,8 +270,9 @@ Linux has. Copy `vtt` to another machine and run `vtt setup` there.
 
 ## Limits
 
-- Characters your layout has no key for (Urdu script, emoji) are typed with **Ctrl+Shift+U**
-  Unicode input. That works in GTK/GNOME apps but not everywhere (some terminals).
+- When typing (pasting off, or not on GNOME), characters your layout has no key for (Urdu
+  script, emoji) are typed with **Ctrl+Shift+U** Unicode input. That works in GTK/GNOME apps
+  but not everywhere (some terminals). Pasting has no such limit.
 
 ## Reliability: supervision (Erlang/OTP style)
 
@@ -282,8 +307,9 @@ rewriting keep the language you speak or write in any case.
 
 Like Teams or Postman, Wortfluss updates itself in the background: 2 minutes after it starts and
 then every 6 hours it looks for a new release, downloads it, checks it, and switches to it when it
-is idle (never during a dictation, a session or an open rewrite window). A notification says
-"Wortfluss was updated to version X". Tray → *Check for updates* or `vtt update` look right away;
+is idle (never during a dictation, a session or an open rewrite window). After the restart the
+new version says "Wortfluss was updated to version X". Tray → *Check for updates* (shows
+"searching" and "version X found, downloading") or `vtt update` look right away;
 `auto_update = false` in config.toml turns it off.
 
 - **Where from:** the releases of this repository (`1a-khan/wortfluss`).
@@ -292,12 +318,13 @@ is idle (never during a dictation, a session or an open rewrite window). A notif
   is installed only if the signature, every file's hash and size match and the version is newer.
 - **No admin rights:** the program lives in a folder the user owns (Windows
   `%LOCALAPPDATA%\Programs\Wortfluss`, Linux `~/.local/bin`). New files are written as
-  `NAME.new`, then swapped in by renaming (a running Windows .exe is renamed to `NAME.old` and
-  deleted at the next start).
+  `NAME.new`, then swapped in by renaming (a running Windows .exe is renamed to `NAME.old`, or
+  `NAME.old-2`... if an older one is still in use, and deleted at the next start).
 
 Publishing (maintainer): bump `version` in Cargo.toml, commit, push, wait for CI, then
-`scripts/release.sh 0.3.0 [notes.md]`. It tags the commit, signs the CI binaries with
-`~/.config/wortfluss-release/signing.key` and publishes them. **Back up that key** (password
+`scripts/release.sh VERSION [notes.md]`. It tags the commit, signs the CI binaries with
+`~/.config/wortfluss-release/signing.key`, publishes them and prints VirusTotal links for
+each file. **Back up that key** (password
 manager): without it no update can be published to existing installations.
 
 ## Windows
@@ -308,7 +335,7 @@ The same program builds for Windows; only the operating-system parts differ
 | Part | Linux | Windows |
 |---|---|---|
 | hotkey & shortcuts | evdev (`/dev/input`), needs the `input` group | low-level keyboard hook, no permissions |
-| typing | uinput + xkbcommon key map per layout | `SendInput` with `KEYEVENTF_UNICODE`: any character, any layout |
+| putting text in | pasted by the GNOME extension; else uinput + xkbcommon key map per layout | pasted (clipboard + Ctrl+V); else `SendInput` with `KEYEVENTF_UNICODE` |
 | microphone | sound-server sources (PulseAudio protocol) | cpal/WASAPI devices by name |
 | system audio (sessions) | monitor of the default output | WASAPI loopback of the default output |
 | tray | StatusNotifierItem (ksni) | notification area (`tray-icon`) |
@@ -326,8 +353,9 @@ supervision, usage. Config files and key names (`KEY_RIGHTCTRL`) are the same on
 optional start at login and `vtt` on the PATH, then it opens the setup. Uninstalling stops
 Wortfluss and removes autostart and PATH entries; settings and transcripts stay.
 
-Windows limits: apps running as administrator can't receive typed text; the installer is
-not code-signed yet (SmartScreen warns once). Details: `vtt help windows`.
+Windows limits: apps running as administrator can't receive pasted or typed text; the
+installer is not code-signed yet (SmartScreen warns once). The .exe files carry version
+information, icon and manifest (publisher MIAK IT), added by `build.rs`. Details: `vtt help windows`.
 
 ## License & credits
 

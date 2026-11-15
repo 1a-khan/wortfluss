@@ -5,7 +5,7 @@ use crate::providers;
 use anyhow::{bail, Result};
 
 const OVERVIEW: &str = "\
-Wortfluss (vtt) - hold a key, speak, let go: the text is typed wherever your cursor is.
+Wortfluss (vtt) - hold a key, speak, let go: the text appears wherever your cursor is.
 
 GETTING STARTED
     vtt setup        answer a few questions (service, key, model, language, hotkey ...)
@@ -22,14 +22,14 @@ WITHOUT THE TERMINAL
 REWRITE SELECTED TEXT (like the writing assistant on phones)
     Select text in any app, press Ctrl+Alt+R. A small window shows the corrected text right
     away; pick a tone with the mouse or 1-6: Korrigieren, Professionell, Zwanglos, Höflich,
-    #social, Emojis hinzufügen. Edit the suggestion if you like, then Enter (Ersetzen) types
+    #social, Emojis hinzufügen. Edit the suggestion if you like, then Enter (Ersetzen) puts
     it over the selection; Copy puts it on the clipboard, Esc cancels. Uses the text model of
     `vtt set correction` (about $0.0001 per suggestion). Labels are German on German systems.
 
 COMMANDS
     vtt setup        menu of all settings with current values; change one at a time
     vtt set <what>   change one thing directly: service, model, key, correction, phrases,
-                     language, mic, hotkey, mode, sounds, indicator, layout, autostart,
+                     language, mic, hotkey, mode, sounds, indicator, paste, layout, autostart,
                      session, ui-language, shortcuts, advanced
     vtt phrases      list names/words to spell right; vtt phrases add \"A, B\" / remove \"A\"
     vtt check        test everything vtt needs and show how to fix problems
@@ -46,7 +46,7 @@ COMMANDS
     vtt notes FILE [lecture|meeting|summary]          (re)write notes for a transcript
     vtt speakers FILE  give \"Speaker 1\", \"Speaker 2\" ... real names
     vtt autostart on|off      start at login or not
-    vtt test-type    type a test sentence after 3 seconds
+    vtt test-type    put a test sentence in after 3 seconds (pasted or typed, like dictation)
     vtt test-mic     record 4 seconds to vtt-test.wav
     vtt help <topic> more help on a topic
     vtt --version
@@ -81,10 +81,12 @@ Everything else works as on Linux: the tray menu, Ctrl+Alt shortcuts, `vtt set .
 sessions, notes, speaker separation.
 
 Differences to Linux:
-- No permission setup: the keyboard hook and typing work for every user.
-- Typing sends each character as itself, so every keyboard layout and every script
-  (ü, ş, ß, اردو, emoji) works; `vtt set layout` has nothing to do.
-- Apps running as administrator can't receive typed text from a normal program
+- No permission setup: the keyboard hook and pasting/typing work for every user.
+- Text is pasted (clipboard + Ctrl+V, your clipboard put back, kept out of the Win+V
+  history), so every keyboard layout and every script (ü, ş, ß, اردو, emoji) works;
+  `vtt set layout` has nothing to do. With `vtt set paste` off, each character is typed as
+  itself instead (some apps, e.g. Windows 11 Notepad, garble fast typing).
+- Apps running as administrator can't receive text from a normal program
   (Windows security). Run Wortfluss as administrator too only if you really need that.
 - \"What the computer plays\" is recorded from the current default output (WASAPI
   loopback). Long silences aren't recorded at all, so times in the transcript can run a
@@ -143,12 +145,17 @@ If the internet drops, unsent pieces are saved; `vtt retry` transcribes them lat
 Beeps: high beep = recording, low beep = sent (`vtt set sounds`).
 While listening, a small sound wave appears next to the text cursor; grey dots = turning
 speech into text (`vtt set indicator`; on GNOME after logging out and in once).
+
+The text is pasted and your clipboard put back (`vtt set paste`; off = typed key by key).
+GNOME: done by the Wortfluss extension (Ctrl+Shift+V in terminals), active after logging
+out and in once; other Linux desktops type.
 ";
 
 const LAYOUT: &str = "\
 KEYBOARD LAYOUT
 
-vtt types by pressing keys on a virtual keyboard, so it must know your layout. With
+When typing (pasting off, or not on GNOME), vtt presses keys on a virtual keyboard, so it
+must know your layout. With
 \"automatic\" (default) it follows the layout the desktop uses right now, including
 switching (e.g. German <-> Turkish with Super+Space). On non-GNOME desktops it uses the
 system default from /etc/default/keyboard. You can also set a fixed layout in setup.
@@ -301,6 +308,8 @@ Nothing happens when I hold the key
     - Is vtt running?  `vtt check` (last line) or `vtt start`
     - \"no keyboard could be opened\": permission setup missing, see below
 Wrong characters are typed            ->  vtt help layout
+Typed slowly instead of pasted (GNOME) -> log out and in once (loads the extension)
+Doubled or missing letters in an app   ->  vtt set paste  (turn pasting on)
 \"API key rejected\" / \"HTTP 401\"     ->  vtt set key
 \"rate limit\" / \"HTTP 429\"           ->  free plan limit; wait, or upgrade the plan
 \"not enough credit\" / \"HTTP 402\"    ->  top up (OpenRouter), or vtt set service

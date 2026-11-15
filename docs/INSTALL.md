@@ -93,12 +93,17 @@ The setup (a window with questions) asks:
 Wortfluss then runs in the background. You will see its icon in the tray / notification area
 (on Windows maybe under the small arrow ^ next to the clock).
 
+**Linux with GNOME (e.g. Ubuntu):** Wortfluss installs a small GNOME extension for the
+listening bubble and for pasting. When a message asks you to, **log out and back in once**
+so GNOME loads it. Until then everything works, the text is just typed instead of pasted
+and there is no bubble.
+
 ## 4. Daily use
 
 | You want to... | Do this |
 |---|---|
 | **Dictate** | Click into any text field, **hold Right Ctrl**, speak, let go. The text appears after about a second. |
-| Know it is listening | A short beep, and a small moving sound wave next to the cursor. |
+| Know it is listening | A short beep, and a small bubble with a moving sound wave next to the text cursor (in apps that don't report their cursor: at the bottom of the screen). Grey dots: the text is on its way. |
 | **Improve selected text** | Select text, press **Ctrl+Alt+R**, choose a tone with 1–6 (correct, professional, casual, polite, social, emojis), **Enter** replaces it. |
 | **Transcribe a lecture, video or meeting** | **Ctrl+Alt+S** starts and stops; the transcript and notes land in *Documents/vtt* (tray → *Open transcripts folder*). Only record people with their consent. |
 | Change settings | Tray icon → *All settings...* (or **Ctrl+Alt+V**), Start menu → *Wortfluss settings*, or `vtt setup`. |
@@ -111,12 +116,20 @@ Tips:
 - Names and special words: tray → *All settings...* → *Phrases*, or `vtt phrases add "Name, Word"`.
 - The interface follows your system language (English, Deutsch, Türkçe, Español, Polski,
   Italiano).
+- The text is **pasted** (fast, any language and emoji). Your clipboard is used for a moment
+  and then put back, so something you copied before is still there afterwards. (Linux: a
+  copied image is replaced.) Prefer typing letter by letter? *All settings...* → *Put text in
+  by pasting* → No.
+- Turn the bubble off: *All settings...* → *Listening bubble at the text cursor*.
 
 ## 5. Updates
 
 Nothing to do: Wortfluss looks for new versions every few hours and installs them in the
 background when you are not dictating. Only versions signed by the publisher are accepted.
-To check at once: tray icon → *Check for updates*, or `vtt update`.
+After the update a message says *"Wortfluss was updated to version X"*.
+To check at once: tray icon → *Check for updates* (it tells you when it is searching and
+downloading), or `vtt update`. Linux with GNOME: if an update asks you to log out and back in,
+do so when convenient.
 
 ## 6. Uninstall
 
@@ -130,9 +143,14 @@ To check at once: tray icon → *Check for updates*, or `vtt update`.
 
 1. Run `vtt check`: it tests the key, microphone, keyboard access and autostart and says
    what to fix.
-2. Nothing is typed into a program that runs **as administrator** (Windows): Windows doesn't
+2. Nothing appears in a program that runs **as administrator** (Windows): Windows doesn't
    allow that; start that program normally.
-3. Still stuck: [report a problem](https://github.com/1a-khan/wortfluss/issues/new/choose)
+3. Linux: the text is typed slowly instead of pasted, or there is no bubble: log out and back
+   in once (GNOME loads the Wortfluss extension then). Text in a terminal shows `^V`: tell us
+   which terminal program it is.
+4. An app shows strange or doubled letters: make sure *Put text in by pasting* is on
+   (`vtt set paste`).
+5. Still stuck: [report a problem](https://github.com/1a-khan/wortfluss/issues/new/choose)
    (never post your API key), or contact [MIAK IT](https://miak-it.de).
 
 ---

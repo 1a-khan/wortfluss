@@ -370,12 +370,12 @@ const TEXTS: &[Row] = &[
         "Impostazione non modificata: {}",
     ]),
     ("ind.relogin", [
-        "Log out and back in once to see the listening bubble next to the text cursor.",
-        "Einmal ab- und wieder anmelden, dann erscheint die Zuhör-Anzeige neben dem Textcursor.",
-        "Metin imlecinin yanındaki dinleme göstergesini görmek için bir kez oturumu kapatıp yeniden açın.",
-        "Cierra la sesión y vuelve a entrar una vez para ver el indicador de escucha junto al cursor.",
-        "Wyloguj się i zaloguj ponownie, aby zobaczyć wskaźnik nasłuchiwania obok kursora tekstu.",
-        "Esci e rientra una volta per vedere l'indicatore di ascolto accanto al cursore del testo.",
+        "Log out and back in once: then the listening bubble appears next to the text cursor and text is pasted instead of typed.",
+        "Einmal ab- und wieder anmelden: Dann erscheint die Zuhör-Anzeige neben dem Textcursor, und Text wird eingefügt statt getippt.",
+        "Bir kez oturumu kapatıp yeniden açın: Ardından dinleme göstergesi metin imlecinin yanında görünür ve metin yazılmak yerine yapıştırılır.",
+        "Cierra la sesión y vuelve a entrar una vez: entonces el indicador de escucha aparece junto al cursor y el texto se pega en lugar de escribirse.",
+        "Wyloguj się i zaloguj ponownie: wtedy wskaźnik nasłuchiwania pojawi się obok kursora tekstu, a tekst będzie wklejany zamiast pisany.",
+        "Esci e rientra una volta: poi l'indicatore di ascolto appare accanto al cursore e il testo viene incollato invece che digitato.",
     ]),
     ("msg.no_speech", [
         "Recording stopped: no speech for {} seconds.",

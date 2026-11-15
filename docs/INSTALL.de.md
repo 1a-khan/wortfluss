@@ -98,12 +98,17 @@ Die Einrichtung (ein Fenster mit Fragen) fragt:
 Danach läuft Wortfluss im Hintergrund. Sie sehen sein Symbol im Infobereich / in der
 Taskleiste (unter Windows evtl. hinter dem kleinen Pfeil ^ neben der Uhr).
 
+**Linux mit GNOME (z. B. Ubuntu):** Wortfluss installiert eine kleine GNOME-Erweiterung für
+die Zuhör-Blase und das Einfügen. Wenn eine Meldung darum bittet, **einmal ab- und wieder
+anmelden**, damit GNOME sie lädt. Bis dahin funktioniert alles, der Text wird nur getippt
+statt eingefügt, und es gibt keine Blase.
+
 ## 4. Im Alltag
 
 | Sie möchten … | So geht's |
 |---|---|
 | **Diktieren** | In ein Textfeld klicken, **rechte Strg-Taste halten**, sprechen, loslassen. Der Text erscheint nach etwa einer Sekunde. |
-| Sehen, dass es zuhört | Ein kurzer Piepton und eine kleine bewegte Schallwelle neben dem Cursor. |
+| Sehen, dass es zuhört | Ein kurzer Piepton und eine kleine Blase mit bewegter Schallwelle neben dem Text-Cursor (in Apps, die ihren Cursor nicht melden: unten am Bildschirm). Graue Punkte: Der Text ist unterwegs. |
 | **Markierten Text verbessern** | Text markieren, **Strg+Alt+R**, Ton mit 1–6 wählen (korrigieren, professionell, zwanglos, höflich, Social Media, Emojis), **Enter** ersetzt ihn. |
 | **Vorlesung, Video oder Besprechung mitschreiben** | **Strg+Alt+S** startet und stoppt; Transkript und Notizen landen in *Dokumente/vtt* (Symbol → *Ordner mit Transkripten öffnen*). Andere Personen nur mit deren Einverständnis aufnehmen. |
 | Einstellungen ändern | Symbol → *Alle Einstellungen …* (oder **Strg+Alt+V**), Startmenü → *Wortfluss settings*, oder `vtt setup`. |
@@ -116,12 +121,20 @@ Tipps:
 - Namen und Fachbegriffe: Symbol → *Alle Einstellungen …* → *Phrases*, oder
   `vtt phrases add "Name, Begriff"`.
 - Die Oberfläche folgt der Systemsprache (English, Deutsch, Türkçe, Español, Polski, Italiano).
+- Der Text wird **eingefügt** (schnell, jede Sprache und Emojis). Die Zwischenablage wird dafür
+  kurz benutzt und danach zurückgesetzt, vorher Kopiertes ist also weiterhin da. (Linux: Ein
+  kopiertes Bild wird ersetzt.) Lieber Buchstabe für Buchstabe tippen lassen? *Alle
+  Einstellungen …* → *Put text in by pasting* → No.
+- Blase ausschalten: *Alle Einstellungen …* → *Listening bubble at the text cursor*.
 
 ## 5. Updates
 
 Nichts zu tun: Wortfluss sucht alle paar Stunden nach neuen Versionen und installiert sie im
 Hintergrund, wenn Sie gerade nicht diktieren. Es werden nur vom Herausgeber signierte
-Versionen angenommen. Sofort prüfen: Symbol → *Nach Updates suchen*, oder `vtt update`.
+Versionen angenommen. Danach meldet es *„Wortfluss wurde auf Version X aktualisiert.“*
+Sofort prüfen: Symbol → *Nach Updates suchen* (meldet Suche und Download), oder
+`vtt update`. Linux mit GNOME: Bittet ein Update ums Ab- und Anmelden, das bei Gelegenheit
+tun.
 
 ## 6. Deinstallieren
 
@@ -135,9 +148,14 @@ Versionen angenommen. Sofort prüfen: Symbol → *Nach Updates suchen*, oder `vt
 
 1. `vtt check` ausführen: prüft Schlüssel, Mikrofon, Tastaturzugriff und Autostart und sagt,
    was zu tun ist.
-2. In ein Programm, das **als Administrator** läuft, wird nichts getippt (Windows): Das lässt
+2. In einem Programm, das **als Administrator** läuft, erscheint nichts (Windows): Das lässt
    Windows nicht zu; das Programm normal starten.
-3. Weiterhin Probleme: [Problem melden](https://github.com/1a-khan/wortfluss/issues/new/choose)
+3. Linux: Der Text wird langsam getippt statt eingefügt, oder es gibt keine Blase: einmal ab-
+   und wieder anmelden (dann lädt GNOME die Wortfluss-Erweiterung). Im Terminal erscheint
+   `^V`: Bitte melden, welches Terminal-Programm es ist.
+4. Eine App zeigt seltsame oder doppelte Buchstaben: prüfen, ob *Put text in by pasting*
+   eingeschaltet ist (`vtt set paste`).
+5. Weiterhin Probleme: [Problem melden](https://github.com/1a-khan/wortfluss/issues/new/choose)
    (nie den API-Schlüssel posten), oder [MIAK IT](https://miak-it.de) kontaktieren.
 
 ---
