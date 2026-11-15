@@ -5,17 +5,17 @@
 #
 # 1. Cargo.toml must say this version, the work must be committed and pushed, and CI
 #    must have passed for that commit (it builds Linux, Windows and the installer).
-# 2. Tags the commit v0.3.0 in the private source repo.
+# 2. Tags the commit v0.3.0.
 # 3. Downloads CI's binaries, signs latest.json with the release key
 #    (~/.config/wortfluss-release/signing.key, never leaves this machine) and publishes
-#    everything as a release of the public repo 1a-khan/wortfluss-releases.
+#    everything as a GitHub release of 1a-khan/wortfluss.
 # Installed copies pick it up within 6 hours (or at once with `vtt update`).
 set -euo pipefail
 
 VERSION="${1:?usage: scripts/release.sh VERSION [notes-file]}"
 NOTES="${2:-}"
 SRC_REPO="1a-khan/wortfluss"
-PUB_REPO="1a-khan/wortfluss-releases"
+PUB_REPO="$SRC_REPO" # releases live next to the source (public repo)
 KEY="${WORTFLUSS_RELEASE_KEY:-$HOME/.config/wortfluss-release/signing.key}"
 TAG="v$VERSION"
 cd "$(dirname "$0")/.."
@@ -28,6 +28,8 @@ grep -q "^version = \"$VERSION\"" Cargo.toml || die "Cargo.toml is not at versio
 COMMIT=$(git rev-parse HEAD)
 git fetch -q origin
 git branch -r --contains "$COMMIT" | grep -q . || die "commit $COMMIT is not pushed"
+[ "$(gh repo view "$PUB_REPO" --json visibility -q .visibility)" = "PUBLIC" ] \
+    || die "$PUB_REPO is not public: installed copies could not download the update"
 if gh release view "$TAG" --repo "$PUB_REPO" >/dev/null 2>&1; then
     die "$TAG is already published"
 fi

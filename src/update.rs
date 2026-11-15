@@ -1,8 +1,7 @@
 //! Automatic updates, like Teams or Postman: Wortfluss looks for a new version in the
 //! background, downloads it, checks it, and switches to it when it is idle.
 //!
-//! Releases live in the public repository `1a-khan/wortfluss-releases` (only binaries,
-//! no source). Each release has `latest.json` (version, files, SHA-256 hashes) and
+//! Releases are GitHub releases of the public repository `1a-khan/wortfluss`. Each release has `latest.json` (version, files, SHA-256 hashes) and
 //! `latest.json.sig`, an Ed25519 signature of it. Wortfluss accepts an update only if
 //! the signature matches the public key built into it (`release-key.pub`) and the
 //! version is newer than its own, so nobody else can push code to its users and old
@@ -24,7 +23,7 @@ use std::time::Duration;
 
 /// Where the newest release is described.
 pub const MANIFEST_URL: &str =
-    "https://github.com/1a-khan/wortfluss-releases/releases/latest/download/latest.json";
+    "https://github.com/1a-khan/wortfluss/releases/latest/download/latest.json";
 /// Overrides MANIFEST_URL (a URL or a local file path), for testing a release.
 const URL_ENV: &str = "VTT_UPDATE_URL";
 

@@ -1,6 +1,7 @@
 mod audio;
 mod config;
 mod correct;
+mod credits;
 mod help;
 mod hotkey;
 mod i18n;
@@ -141,6 +142,7 @@ fn run() -> Result<()> {
         }
         Some("-V" | "--version" | "version") => {
             println!("vtt {}", env!("CARGO_PKG_VERSION"));
+            println!("{}\n{}", credits::line(), credits::links());
             Ok(())
         }
         Some("-h" | "--help" | "help") => help::show(args.get(1).map(String::as_str)),
@@ -629,6 +631,11 @@ fn handle_action(action: hotkey::Action) {
             }
         }
         Rewrite | CheckUpdates => {} // need the main loop's state: handled there
+        OpenUrl(url) => {
+            if let Err(e) = platform::open_path(std::path::Path::new(&url)) {
+                report(&format!("{e:#}"));
+            }
+        }
         OpenSettings => {
             if let Err(e) = platform::open_in_terminal(&["setup"]) {
                 report(&format!("{e:#}"));

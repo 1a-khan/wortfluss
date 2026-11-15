@@ -69,6 +69,8 @@ pub enum Action {
     Rewrite,
     /// Look for a new version now.
     CheckUpdates,
+    /// Open a web page (About: website, GitHub, license).
+    OpenUrl(String),
     Quit,
 }
 

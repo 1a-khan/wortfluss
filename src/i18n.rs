@@ -280,6 +280,18 @@ const TEXTS: &[Row] = &[
         "Sprawdź aktualizacje",
         "Cerca aggiornamenti",
     ]),
+    ("tray.about", ["About Wortfluss", "Über Wortfluss", "Wortfluss hakkında", "Acerca de Wortfluss", "O Wortfluss", "Informazioni su Wortfluss"]),
+    ("tray.made_by", ["Made by {}", "Entwickelt von {}", "Geliştiren: {}", "Creado por {}", "Autor: {}", "Creato da {}"]),
+    ("tray.website", ["Website", "Website", "Web sitesi", "Sitio web", "Strona internetowa", "Sito web"]),
+    ("tray.github", ["GitHub profile", "GitHub-Profil", "GitHub profili", "Perfil de GitHub", "Profil GitHub", "Profilo GitHub"]),
+    ("tray.source", [
+        "Source code (Apache 2.0, free to use)",
+        "Quellcode (Apache 2.0, frei nutzbar)",
+        "Kaynak kodu (Apache 2.0, ücretsiz kullanım)",
+        "Código fuente (Apache 2.0, uso libre)",
+        "Kod źródłowy (Apache 2.0, do swobodnego użytku)",
+        "Codice sorgente (Apache 2.0, uso libero)",
+    ]),
     ("tray.quit", ["Quit Wortfluss", "Wortfluss beenden", "Wortfluss'tan çık", "Salir de Wortfluss", "Zamknij Wortfluss", "Esci da Wortfluss"]),
     // ---- setting changes (shown as "<name>: on")
     ("set.speakers", [

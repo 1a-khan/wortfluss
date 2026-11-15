@@ -2,6 +2,9 @@
 name = "vtt"
 version = "0.3.0"
 edition = "2021"
+authors = ["Ammad Khan (MIAK IT)"]
+license = "Apache-2.0"
+repository = "https://github.com/1a-khan/wortfluss"
 description = "Wortfluss: hold a key, speak, and the text is typed into any app; sessions transcribe lectures and meetings with notes."
 
 [dependencies]

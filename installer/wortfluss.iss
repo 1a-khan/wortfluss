@@ -14,7 +14,10 @@
 AppId={{6C3F8A1E-4B2D-4F7A-9E51-57A0D3C2B8F4}
 AppName=Wortfluss
 AppVersion={#AppVersion}
-AppPublisher=MIAK IT
+AppPublisher=MIAK IT (Ammad Khan)
+AppPublisherURL=https://github.com/1a-khan
+AppSupportURL=https://github.com/1a-khan/wortfluss
+AppUpdatesURL=https://github.com/1a-khan/wortfluss/releases
 AppComments=Hold a key, speak, and the text is typed into any app. Sessions transcribe lectures and meetings with notes.
 DefaultDirName={localappdata}\Programs\Wortfluss
 DefaultGroupName=Wortfluss
@@ -44,6 +47,8 @@ Source: "{#BinDir}\vtt.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\wortfluss.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "wortfluss.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 
 [UninstallDelete]
 ; left behind by automatic updates (see src/update.rs)

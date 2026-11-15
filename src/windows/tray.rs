@@ -198,6 +198,19 @@ fn menu(t: &VttTray) -> Menu {
     items.push(Box::new(sep()));
     items.push(Box::new(item("settings", &with_key(crate::i18n::t("tray.settings"), &t.shortcut_settings))));
     items.push(Box::new(item("updates", crate::i18n::t("tray.updates"))));
+    let version = MenuItem::new(format!("Wortfluss {}", env!("CARGO_PKG_VERSION")), false, None);
+    let made_by = MenuItem::new(crate::i18n::tf("tray.made_by", &[crate::credits::AUTHOR]), false, None);
+    let website = item("url:website", crate::i18n::t("tray.website"));
+    let github = item("url:github", crate::i18n::t("tray.github"));
+    let source = item("url:source", crate::i18n::t("tray.source"));
+    let mut about: Vec<&dyn IsMenuItem> = vec![&version, &made_by];
+    if !crate::credits::WEBSITE.is_empty() {
+        about.push(&website);
+    }
+    about.extend([&github as &dyn IsMenuItem, &source]);
+    if let Ok(m) = Submenu::with_items(crate::i18n::t("tray.about"), true, &about) {
+        items.push(Box::new(m));
+    }
     items.push(Box::new(item("quit", crate::i18n::t("tray.quit"))));
 
     let refs: Vec<&dyn IsMenuItem> = items.iter().map(|b| b.as_ref()).collect();
@@ -222,6 +235,9 @@ fn action_for(t: &VttTray, id: &str) -> Option<Action> {
         "settings" => Action::OpenSettings,
         "quit" => Action::Quit,
         "updates" => Action::CheckUpdates,
+        "url:website" => Action::OpenUrl(crate::credits::WEBSITE.into()),
+        "url:github" => Action::OpenUrl(crate::credits::GITHUB.into()),
+        "url:source" => Action::OpenUrl(crate::credits::REPO.into()),
         "mic:" => Action::SetMic(String::new()),
         _ => {
             if let Some(src) = id.strip_prefix("session:") {

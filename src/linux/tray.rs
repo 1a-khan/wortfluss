@@ -234,6 +234,26 @@ impl ksni::Tray for VttTray {
         menu.push(MenuItem::Separator);
         menu.push(item(with_key(crate::i18n::t("tray.settings"), &self.shortcut_settings), Action::OpenSettings));
         menu.push(item(crate::i18n::t("tray.updates"), Action::CheckUpdates));
+        let mut about: Vec<MenuItem<Self>> = vec![
+            StandardItem {
+                label: format!("Wortfluss {}", env!("CARGO_PKG_VERSION")),
+                enabled: false,
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: crate::i18n::tf("tray.made_by", &[crate::credits::AUTHOR]),
+                enabled: false,
+                ..Default::default()
+            }
+            .into(),
+        ];
+        if !crate::credits::WEBSITE.is_empty() {
+            about.push(item(crate::i18n::t("tray.website"), Action::OpenUrl(crate::credits::WEBSITE.into())));
+        }
+        about.push(item(crate::i18n::t("tray.github"), Action::OpenUrl(crate::credits::GITHUB.into())));
+        about.push(item(crate::i18n::t("tray.source"), Action::OpenUrl(crate::credits::REPO.into())));
+        menu.push(SubMenu { label: crate::i18n::t("tray.about").into(), submenu: about, ..Default::default() }.into());
         menu.push(item(crate::i18n::t("tray.quit"), Action::Quit));
         menu
     }

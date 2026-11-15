@@ -265,7 +265,7 @@ is idle (never during a dictation, a session or an open rewrite window). A notif
 "Wortfluss was updated to version X". Tray → *Check for updates* or `vtt update` look right away;
 `auto_update = false` in config.toml turns it off.
 
-- **Where from:** releases of the public repository `1a-khan/wortfluss-releases` (binaries only).
+- **Where from:** the releases of this repository (`1a-khan/wortfluss`).
 - **Safe:** each release has a `latest.json` (version, files, SHA-256) signed with the Wortfluss
   release key (Ed25519). The public half is built into the program (`release-key.pub`); an update
   is installed only if the signature, every file's hash and size match and the version is newer.
@@ -307,3 +307,14 @@ Wortfluss and removes autostart and PATH entries; settings and transcripts stay.
 
 Windows limits: apps running as administrator can't receive typed text; the installer is
 not code-signed yet (SmartScreen warns once). Details: `vtt help windows`.
+
+## License & credits
+
+Wortfluss is created by **Ammad Khan** ([MIAK IT](https://github.com/1a-khan)) and is open
+source under the [Apache License 2.0](LICENSE): free to use, change and share, also
+commercially. If you pass on Wortfluss or something built from it, include the
+[NOTICE](NOTICE) file so the original author is credited. The name "Wortfluss" and its logo
+are not part of the license; please give your own version its own name.
+
+- GitHub: https://github.com/1a-khan
+- Source: https://github.com/1a-khan/wortfluss

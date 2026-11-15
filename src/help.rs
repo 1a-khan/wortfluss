@@ -408,5 +408,8 @@ pub fn show(topic: Option<&str>) -> Result<()> {
         },
     };
     print!("{text}");
+    if topic.is_none() {
+        println!("\n{}\n{}", crate::credits::line(), crate::credits::links().trim_end());
+    }
     Ok(())
 }
