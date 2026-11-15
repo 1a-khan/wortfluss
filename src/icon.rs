@@ -1,6 +1,7 @@
 //! The Wortfluss icon, drawn in code (no image files to ship): a microphone with the
 //! monogram WF beside it; the arms of the F are the lines of text flowing out of the mic. Rendered smoothly at any size for the tray (all states), the
-//! notifications and the desktop entry.
+//! notifications and the desktop entry. Self-contained (only `png` and `anyhow`): the
+//! build script also uses it, to put the icon into the Windows .exe files.
 
 /// What the tray icon shows.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -168,17 +169,6 @@ pub fn write_ico(path: &std::path::Path) -> anyhow::Result<()> {
     }
     std::fs::write(path, out)?;
     Ok(())
-}
-
-/// The app icon as a PNG file (for notifications and the desktop entry); written once.
-pub fn app_icon_path() -> Option<std::path::PathBuf> {
-    // The file name carries the design version, so a new design replaces the old file.
-    let path = crate::platform::data_dir().ok()?.join("wortfluss-wf.png");
-    if !path.exists() {
-        std::fs::create_dir_all(path.parent()?).ok()?;
-        write_png(&path, 256, State::Ready, true).ok()?;
-    }
-    Some(path)
 }
 
 #[cfg(test)]

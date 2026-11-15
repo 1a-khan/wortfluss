@@ -41,6 +41,15 @@ jobs:
           target\release\vtt.exe help | Select-Object -First 5
           target\release\vtt.exe _icons installer
           if (-not (Test-Path installer\wortfluss.ico)) { throw "icon missing" }
+          # Version info, publisher and manifest are in both .exe files (build.rs).
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          foreach ($exe in "vtt.exe", "wortfluss.exe") {
+            $info = (Get-Item "target\release\$exe").VersionInfo
+            "$exe : $($info.ProductName) $($info.ProductVersion) / $($info.CompanyName) / $($info.FileDescription)"
+            if ($info.ProductName -ne "Wortfluss" -or $info.ProductVersion -ne $version -or -not $info.CompanyName) { throw "$exe has no version info" }
+            $bytes = [IO.File]::ReadAllBytes("target\release\$exe")
+            if (-not ([Text.Encoding]::ASCII.GetString($bytes) -match 'requestedExecutionLevel level="asInvoker"')) { throw "$exe has no manifest" }
+          }
       - name: Installer (Inno Setup)
         shell: pwsh
         run: |

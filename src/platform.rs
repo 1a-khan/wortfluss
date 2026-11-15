@@ -122,3 +122,13 @@ pub fn start_background() -> Result<()> {
     start_background_with(&["run"])
 }
 
+/// The app icon as a PNG file (for notifications and the desktop entry); written once.
+pub fn app_icon_path() -> Option<std::path::PathBuf> {
+    // The file name carries the design version, so a new design replaces the old file.
+    let path = data_dir().ok()?.join("wortfluss-wf.png");
+    if !path.exists() {
+        std::fs::create_dir_all(path.parent()?).ok()?;
+        crate::icon::write_png(&path, 256, crate::icon::State::Ready, true).ok()?;
+    }
+    Some(path)
+}

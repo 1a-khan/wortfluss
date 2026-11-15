@@ -37,6 +37,23 @@ Halten Sie den Schlüssel geheim: nicht per E-Mail schicken und nirgends veröff
    **„Wortfluss bei der Anmeldung starten“** angehakt lassen.
 4. Am Ende **„Wortfluss jetzt einrichten“** angehakt lassen und **Fertigstellen** klicken.
 
+**Ist das sicher? (Warnungen von Virenscannern)** Wortfluss muss Dinge tun, die
+Virenscanner auch bei Spionage-Software sehen: Es achtet auf seine Diktiertaste, nimmt das
+Mikrofon auf, schickt den Ton an den gewählten Sprachdienst, fügt Text in andere Apps ein
+und aktualisiert sich selbst. Ein Scanner kann deshalb warnen, vor allem solange das
+Programm noch nicht signiert ist.
+
+- Prüfen, ob es die echte Datei ist: Rechtsklick auf `vtt.exe` → **Eigenschaften** →
+  **Details** zeigt *Wortfluss*, *MIAK IT (Ammad Khan)* und die Version. Die Datei
+  `SHA256SUMS` auf der Download-Seite enthält die Prüfsumme jeder Datei.
+- Der vollständige Quellcode ist öffentlich:
+  [github.com/1a-khan/wortfluss](https://github.com/1a-khan/wortfluss). Ton und Text
+  gehen nur an den eingerichteten Dienst; sonst fragt Wortfluss nur bei GitHub nach
+  Updates.
+- Wenn ein Scanner das Programm blockiert, bitte uns (oder dem Hersteller des Scanners)
+  Bescheid geben, damit es freigegeben wird. Firmen-PCs: Die IT kann den Ordner
+  `%LOCALAPPDATA%\Programs\Wortfluss` freigeben.
+
 ### Linux (Ubuntu und andere Distributionen, Wayland oder X11)
 
 Ein Terminal öffnen und diese Befehle nacheinander ausführen:

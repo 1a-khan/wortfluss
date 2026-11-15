@@ -36,6 +36,22 @@ Keep the key private: don't send it by email or post it anywhere.
    **"Start Wortfluss when I log in"** ticked.
 4. At the end, leave **"Set up Wortfluss now"** ticked and click **Finish**.
 
+**Is it safe? (virus scanner warnings)** Wortfluss has to do things that virus scanners
+also see in spy software: it watches for its dictation key, records the microphone, sends
+the audio to the speech service you chose, puts text into other apps and updates itself.
+So a scanner may warn about it, especially while the program is not code-signed yet.
+
+- Check that the file is the real one: right-click `vtt.exe` → **Properties** →
+  **Details** shows *Wortfluss*, *MIAK IT (Ammad Khan)* and the version. The
+  `SHA256SUMS` file on the release page lists the checksum of every download.
+- The complete source code is public:
+  [github.com/1a-khan/wortfluss](https://github.com/1a-khan/wortfluss). Your audio and
+  text go only to the service you set up; besides that, Wortfluss only asks GitHub for
+  updates.
+- If a scanner blocks it, please tell us (or the scanner's maker) so it can be cleared.
+  Company PCs: your IT can allow it for the folder
+  `%LOCALAPPDATA%\Programs\Wortfluss`.
+
 ### Linux (Ubuntu and other distributions, Wayland or X11)
 
 Open a terminal and run these commands one by one:

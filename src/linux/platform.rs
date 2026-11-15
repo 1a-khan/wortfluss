@@ -193,7 +193,7 @@ pub fn set_autostart(on: bool) -> Result<()> {
              Comment=Hold a key, speak, and the text is typed\n\
              Exec=\"{}\" run\nIcon={}\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\nTerminal=false\n",
             super::exe_path()?.display(),
-            crate::icon::app_icon_path().map(|p| p.display().to_string()).unwrap_or_default()
+            crate::platform::app_icon_path().map(|p| p.display().to_string()).unwrap_or_default()
         ),
     )?;
     Ok(())

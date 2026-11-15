@@ -71,3 +71,11 @@ gh release create "$TAG" --repo "$PUB_REPO" --title "Wortfluss $VERSION" "${NOTE
     "$OUT/latest.json" "$OUT/latest.json.sig" "$OUT/SHA256SUMS"
 
 echo "Published $TAG: https://github.com/$PUB_REPO/releases/tag/$TAG"
+
+# Virus-scanner check (free, nothing is uploaded): these pages show what about 70
+# scanners say about each file, once VirusTotal has seen it. A false alarm can be
+# reported to that scanner's vendor; Microsoft Defender: microsoft.com/wdsi/filesubmission
+echo "VirusTotal (look in a day or two; \"not found\" = no scanner has seen it yet):"
+while read -r sum name; do
+    echo "  $name: https://www.virustotal.com/gui/file/$sum"
+done < "$OUT/SHA256SUMS"

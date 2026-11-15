@@ -755,7 +755,7 @@ fn change_setting(f: impl FnOnce(&mut Config) -> String) {
 pub(crate) fn notification() -> notify_rust::Notification {
     let mut n = notify_rust::Notification::new();
     n.appname("Wortfluss");
-    if let Some(p) = icon::app_icon_path() {
+    if let Some(p) = platform::app_icon_path() {
         n.icon(&p.to_string_lossy());
     }
     n
