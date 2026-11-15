@@ -566,6 +566,22 @@ const TEXTS: &[Row] = &[
         "Wortfluss zaktualizowano do wersji {}.",
         "Wortfluss è stato aggiornato alla versione {}.",
     ]),
+    ("upd.checking", [
+        "Searching for updates …",
+        "Suche nach Updates …",
+        "Güncellemeler aranıyor…",
+        "Buscando actualizaciones…",
+        "Szukam aktualizacji…",
+        "Ricerca aggiornamenti…",
+    ]),
+    ("upd.downloading", [
+        "Version {} found. Downloading … Wortfluss restarts by itself when it is installed.",
+        "Version {} gefunden. Wird heruntergeladen … Wortfluss startet nach der Installation von selbst neu.",
+        "{} sürümü bulundu. İndiriliyor… Kurulumdan sonra Wortfluss kendiliğinden yeniden başlar.",
+        "Versión {} encontrada. Descargando… Wortfluss se reinicia solo al instalarla.",
+        "Znaleziono wersję {}. Pobieranie… Po instalacji Wortfluss uruchomi się ponownie.",
+        "Trovata la versione {}. Download in corso… Wortfluss si riavvia da solo dopo l'installazione.",
+    ]),
     ("upd.none", [
         "Wortfluss {} is up to date.",
         "Wortfluss {} ist aktuell.",

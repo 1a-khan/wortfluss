@@ -56,6 +56,44 @@ impl Overlay {
     }
 }
 
+/// Paste `text` into the focused app via the extension (clipboard + Ctrl+V, or
+/// Ctrl+Shift+V in terminals; the user's clipboard is put back). None if that isn't
+/// possible here (not GNOME, or the extension is older than this, e.g. not reloaded since
+/// an update: GNOME loads new extension code only at the next login).
+pub fn paste(text: &str) -> Option<Result<()>> {
+    let conn = session()?;
+    if !extension_running(conn) || extension_version(conn) < 2 {
+        return None;
+    }
+    // In a thread: a desktop that doesn't answer must not hang dictation.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let text = text.to_string();
+    std::thread::spawn(move || {
+        let r = conn.call_method(Some(BUS_NAME), PATH, Some(IFACE), "Paste", &(text,));
+        let _ = tx.send(r.map(|_| ()).map_err(anyhow::Error::from));
+    });
+    Some(match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(r) => r.context("pasting through the GNOME extension"),
+        // Most likely pasted, only the answer is missing: don't type it a second time.
+        Err(_) => Ok(()),
+    })
+}
+
+fn extension_version(conn: &Connection) -> u32 {
+    let reply = conn.call_method(
+        Some(BUS_NAME),
+        PATH,
+        Some("org.freedesktop.DBus.Properties"),
+        "Get",
+        &(IFACE, "Version"),
+    );
+    reply
+        .ok()
+        .and_then(|m| m.body().deserialize::<zvariant::OwnedValue>().ok())
+        .and_then(|v| u32::try_from(v).ok())
+        .unwrap_or(0)
+}
+
 pub fn is_gnome() -> bool {
     std::env::var("XDG_CURRENT_DESKTOP")
         .map(|d| d.split(':').any(|p| p.eq_ignore_ascii_case("GNOME")))

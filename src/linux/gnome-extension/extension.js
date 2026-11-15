@@ -1,7 +1,9 @@
 // Wortfluss listening indicator for GNOME Shell.
 //
 // Wortfluss (https://github.com/1a-khan/wortfluss) calls Frame() about 30 times a second
-// while it listens or works, and Hide() when done. This extension draws a small bubble
+// while it listens or works, and Hide() when done. Paste() puts dictated text into the
+// focused app through the clipboard (on Wayland only the shell and the focused app may
+// set it), then gives the user's clipboard back. This extension draws a small bubble
 // with a sound wave next to the text cursor of the focused app. The cursor position
 // comes from the accessibility bus (AT-SPI), like the screen magnifier uses it; apps that
 // don't report it get the bubble at the bottom center of the screen.
@@ -29,9 +31,22 @@ const IFACE = `
       <arg type="d" name="t" direction="in"/>
     </method>
     <method name="Hide"/>
+    <method name="Paste">
+      <arg type="s" name="text" direction="in"/>
+    </method>
     <property name="Version" type="u" access="read"/>
   </interface>
 </node>`;
+
+// Apps (by window class) where Ctrl+V doesn't paste but Ctrl+Shift+V does.
+const TERMINALS = [
+    'gnome-terminal', 'org.gnome.terminal', 'org.gnome.ptyxis', 'org.gnome.console', 'kgx',
+    'kitty', 'alacritty', 'foot', 'footclient', 'org.wezfurlong.wezterm', 'wezterm',
+    'com.mitchellh.ghostty', 'ghostty', 'konsole', 'org.kde.konsole', 'tilix',
+    'com.gexperts.tilix', 'terminator', 'xfce4-terminal', 'blackbox', 'com.raggesilver.blackbox',
+    'io.elementary.terminal', 'qterminal', 'lxterminal', 'mate-terminal', 'xterm', 'urxvt',
+];
+const RESTORE_MS = 400; // apps fetch the pasted text a moment after Ctrl+V
 
 const BARS = 7; // same as indicator::BARS in Wortfluss
 const BAR_MAX = 16;
@@ -90,6 +105,10 @@ export default class WortflussExtension extends Extension {
         });
         this._tracker.registerFocusListener();
 
+        this._keyboard = Clutter.get_default_backend().get_default_seat()
+            .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        this._restoreId = 0;
+
         this._dbus = Gio.DBusExportedObject.wrapJSObject(IFACE, this);
         this._dbus.export(Gio.DBus.session, OBJECT_PATH);
         this._nameId = Gio.bus_own_name_on_connection(Gio.DBus.session, BUS_NAME,
@@ -107,13 +126,55 @@ export default class WortflussExtension extends Extension {
         this._tracker = null;
         this._focused = null;
         this._clearWatchdog();
+        if (this._restoreId) {
+            GLib.source_remove(this._restoreId);
+            this._restoreId = 0;
+        }
+        this._keyboard = null;
         this._bubble.destroy();
         this._bubble = null;
         this._bars = null;
     }
 
     get Version() {
-        return 1;
+        return 2;
+    }
+
+    // Answers once the text is pasted and the user's clipboard is back, so the next
+    // Paste can't mix with this one.
+    PasteAsync([text], invocation) {
+        const clipboard = St.Clipboard.get_default();
+        clipboard.get_text(St.ClipboardType.CLIPBOARD, (_c, before) => {
+            try {
+                clipboard.set_text(St.ClipboardType.CLIPBOARD, text);
+                const win = global.display.focus_window;
+                const cls = (win?.get_wm_class() ?? '').toLowerCase();
+                const terminal = TERMINALS.some(t => cls === t || cls.startsWith(`${t}-`));
+                this._keys(terminal
+                    ? [Clutter.KEY_Control_L, Clutter.KEY_Shift_L, Clutter.KEY_v]
+                    : [Clutter.KEY_Control_L, Clutter.KEY_v]);
+            } catch (e) {
+                invocation.return_error_literal(Gio.DBusError, Gio.DBusError.FAILED, `${e}`);
+                return;
+            }
+            this._restoreId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, RESTORE_MS, () => {
+                this._restoreId = 0;
+                // Only text can be put back; anything else (an image) stays replaced.
+                if (before !== null)
+                    clipboard.set_text(St.ClipboardType.CLIPBOARD, before);
+                invocation.return_value(null);
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+    }
+
+    // Press the keys in order, release them in reverse order.
+    _keys(keyvals) {
+        let time = GLib.get_monotonic_time();
+        for (const k of keyvals)
+            this._keyboard.notify_keyval(time++, k, Clutter.KeyState.PRESSED);
+        for (const k of [...keyvals].reverse())
+            this._keyboard.notify_keyval(time++, k, Clutter.KeyState.RELEASED);
     }
 
     Frame(working, level, t) {

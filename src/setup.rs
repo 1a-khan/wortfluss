@@ -147,6 +147,7 @@ pub enum Setting {
     Mode,
     Sounds,
     Indicator,
+    Paste,
     Layout,
     Autostart,
     Session,
@@ -169,6 +170,7 @@ const SETTINGS: &[(Setting, &str, &[&str], &str)] = &[
     (Setting::Mode, "mode", &["long", "toggle", "hold", "max-seconds"], "Hold/toggle & long dictations"),
     (Setting::Sounds, "sounds", &["beep", "beeps"], "Beeps"),
     (Setting::Indicator, "indicator", &["bubble", "wave", "listening"], "Listening bubble at the text cursor"),
+    (Setting::Paste, "paste", &["typing", "insert"], "Put text in by pasting (fast)"),
     (Setting::Layout, "layout", &["keyboard"], "Keyboard layout"),
     (Setting::Autostart, "autostart", &["login", "startup"], "Start at login"),
     (Setting::Session, "session", &["sessions", "notes", "lecture", "meeting"], "Session mode (lectures, meetings)"),
@@ -217,6 +219,7 @@ fn current_value(cfg: &Config, s: Setting) -> String {
         ),
         Setting::Sounds => if cfg.sounds { "on".into() } else { "off".into() },
         Setting::Indicator => if cfg.indicator { "on".into() } else { "off".into() },
+        Setting::Paste => if cfg.paste { "on".into() } else { "off, typed key by key".into() },
         Setting::Layout => {
             if cfg.layout_is_auto() { format!("automatic (now {})", layout::detect().0) } else { layout::resolve(cfg).to_string() }
         }
@@ -398,6 +401,16 @@ fn change(t: &ColorfulTheme, cfg: &mut Config, s: Setting) -> Result<()> {
             #[cfg(target_os = "linux")]
             if cfg.indicator && crate::overlay::is_gnome() {
                 println!("  GNOME draws it with a small Wortfluss extension. Log out and back in once to see it.");
+            }
+        }
+        Setting::Paste => {
+            cfg.paste = Confirm::with_theme(t)
+                .with_prompt("Put the text in by pasting it? (fast; your clipboard is put back) No = type it key by key")
+                .default(cfg.paste)
+                .interact()?;
+            #[cfg(target_os = "linux")]
+            if cfg.paste && crate::overlay::is_gnome() {
+                println!("  GNOME pastes with the small Wortfluss extension. After an update, log out and back in once.");
             }
         }
         Setting::Layout => ask_layout(t, cfg)?,

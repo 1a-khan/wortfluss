@@ -227,6 +227,12 @@ mod tests {
 }
 
 /// Can we create the virtual keyboard? (permission check for setup)
+/// Paste `text` into the focused app (GNOME, through the Wortfluss extension). None if
+/// that isn't possible here: type it instead.
+pub fn paste(text: &str) -> Option<Result<()>> {
+    crate::overlay::paste(text)
+}
+
 pub fn can_type() -> bool {
     std::fs::OpenOptions::new()
         .write(true)

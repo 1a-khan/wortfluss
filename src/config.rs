@@ -79,6 +79,8 @@ pub struct Config {
     /// Long recordings are sent in pieces of about this many seconds, cut at a pause.
     pub piece_seconds: u64,
     pub add_trailing_space: bool,
+    /// Put text in by pasting it (fast); false: type it key by key.
+    pub paste: bool,
     pub key_delay_ms: u64,
 
     pub groq: ProviderSettings,
@@ -130,6 +132,7 @@ impl Default for Config {
             max_seconds: 120,
             piece_seconds: 30,
             add_trailing_space: true,
+            paste: true,
             key_delay_ms: 3,
             groq: ProviderSettings::default(),
             openai: ProviderSettings::default(),
@@ -475,7 +478,12 @@ piece_seconds = {piece}
 # Add a space after each dictation so consecutive ones don't run together
 add_trailing_space = {space}
 
-# Milliseconds between simulated key presses (raise it if an app drops characters)
+# Put the text in by pasting it: fast, and safe in apps that garble fast typing. Your
+# clipboard is put back afterwards. (GNOME: done by the Wortfluss extension, active after
+# the next login; other Linux desktops type.) false = type it key by key.
+paste = {paste}
+
+# Milliseconds between simulated key presses when typing (raise it if an app drops characters)
 key_delay_ms = {delay}
 "#,
         provider = q(&c.provider),
@@ -508,6 +516,7 @@ key_delay_ms = {delay}
         piece = c.piece_seconds,
         space = c.add_trailing_space,
         delay = c.key_delay_ms,
+        paste = c.paste,
     );
     for p in providers::PROVIDERS {
         let s = c.settings(p.id);

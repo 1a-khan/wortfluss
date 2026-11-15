@@ -1,9 +1,9 @@
-//! Puts text into the focused window. Normally it is pasted: put on the clipboard (kept
-//! out of the Win+V history), Ctrl+V, and the user's clipboard put back. Typing it as
-//! a stream of KEYEVENTF_UNICODE key events, the obvious way, garbles text in some
-//! apps: Windows 11 Notepad repeats or drops characters ("eeeeeeeer") when they arrive
-//! faster than it handles them. Typing stays as the fallback when the clipboard can't
-//! be used; it works with any keyboard layout and script without a key map.
+//! Puts text into the focused window. `paste`: put on the clipboard (kept out of the
+//! Win+V history), Ctrl+V, and the user's clipboard put back; the default, because typing
+//! a stream of KEYEVENTF_UNICODE key events garbles text in some apps (Windows 11 Notepad
+//! repeats or drops characters, "eeeeeeeer", when they arrive faster than it handles
+//! them). `Typer` types key by key: with `paste = false` or when the clipboard is busy;
+//! it works with any keyboard layout and script without a key map.
 //! (Windows doesn't let a normal program type into apps running as administrator.)
 
 use crate::layout::Layout;
@@ -46,17 +46,9 @@ impl Typer {
         Ok(Self { delay: Duration::from_millis(delay_ms) })
     }
 
+    /// Key by key, as Unicode key events.
     pub fn type_text(&mut self, text: &str, _layout: &Layout) -> Result<()> {
         wait_keys_released();
-        match paste(text) {
-            Ok(()) => Ok(()),
-            Err(Pasting::NoClipboard) => self.type_keys(text),
-            Err(Pasting::Blocked(e)) => Err(e),
-        }
-    }
-
-    /// Key by key, as Unicode key events.
-    fn type_keys(&mut self, text: &str) -> Result<()> {
         for c in text.chars() {
             match c {
                 // Shift+Enter: a new line that doesn't send the message in chat apps.
@@ -100,7 +92,18 @@ pub fn wait_keys_released() {
     }
 }
 
-pub enum Pasting {
+/// Paste `text` into the focused window. None if the clipboard can't be used right now
+/// (another program holds it): type it instead.
+pub fn paste(text: &str) -> Option<Result<()>> {
+    wait_keys_released();
+    match paste_via_clipboard(text) {
+        Ok(()) => Some(Ok(())),
+        Err(Pasting::NoClipboard) => None,
+        Err(Pasting::Blocked(e)) => Some(Err(e)),
+    }
+}
+
+enum Pasting {
     /// The clipboard couldn't be used (another program holds it): type instead.
     NoClipboard,
     /// Windows refused the Ctrl+V (an app running as administrator is in front).
@@ -113,8 +116,8 @@ enum Saved {
     Nothing,
 }
 
-/// Paste `text` into the focused window and put the clipboard back as it was.
-pub fn paste(text: &str) -> std::result::Result<(), Pasting> {
+/// Clipboard, Ctrl+V, clipboard put back as it was.
+fn paste_via_clipboard(text: &str) -> std::result::Result<(), Pasting> {
     use arboard::SetExtWindows;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_CONTROL;
     const VK_V: u16 = b'V' as u16;

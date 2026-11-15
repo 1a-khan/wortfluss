@@ -406,9 +406,8 @@ pub fn paste(a: &Accepted) -> Result<()> {
     }
     std::thread::sleep(Duration::from_millis(80)); // the app settles after getting the focus
     match crate::typer::paste(&a.text) {
-        Ok(()) => Ok(()),
-        Err(crate::typer::Pasting::Blocked(e)) => Err(e),
-        Err(crate::typer::Pasting::NoClipboard) => bail!("the clipboard is in use by another program"),
+        Some(r) => r,
+        None => bail!("the clipboard is in use by another program"),
     }
 }
 

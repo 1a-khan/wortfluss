@@ -20,7 +20,6 @@ use windows_sys::Win32::UI::Shell::{FOLDERID_Documents, SHGetKnownFolderPath};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const DETACHED_PROCESS: u32 = 0x0000_0008;
-const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const APP: &str = "Wortfluss";
@@ -263,10 +262,19 @@ pub fn owns_console() -> bool {
 
 /// Run `vtt <args>` in a new console window (tray "All settings...", shortcut). The window
 /// waits for Enter at the end (see `owns_console`), so the last message can be read.
+///
+/// Started through `cmd /c start`: a child created directly with CREATE_NEW_CONSOLE gets
+/// the background vtt's input and output (no console, a log file) instead of the new
+/// window's, so the settings saw no keyboard, stopped at once and the window vanished.
 pub fn open_in_terminal(args: &[&str]) -> Result<()> {
-    Command::new(super::exe_path()?)
-        .args(args)
-        .creation_flags(CREATE_NEW_CONSOLE)
+    let exe = super::exe_path()?;
+    let line = format!("/d /c start \"Wortfluss\" \"{}\" {}", exe.display(), args.join(" "));
+    Command::new("cmd.exe")
+        .raw_arg(line)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .context("could not open a console window")?;
     Ok(())

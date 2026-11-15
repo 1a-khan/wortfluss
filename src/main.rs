@@ -243,8 +243,14 @@ fn update_now() -> Result<()> {
 /// Look for a new version; when found, download and check it and tell the main loop.
 /// `manual`: the user asked (tray), so also say "up to date" and show errors.
 fn find_update(pending: &Mutex<Option<update::Manifest>>, tx: &mpsc::Sender<hotkey::Event>, manual: bool) {
+    if manual {
+        info(i18n::t("upd.checking"));
+    }
     let result = update::check().and_then(|found| match found {
         Some(m) => {
+            if manual {
+                info(&i18n::tf("upd.downloading", &[&m.version]));
+            }
             update::download(&m)?;
             Ok(Some(m))
         }
@@ -295,7 +301,10 @@ fn worker() -> Result<()> {
                 // Each text in isolation: a crash while typing loses this text only, and
                 // the virtual keyboard is created again.
                 let typed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    typer.type_text(&text, &layout)
+                    match cfg.paste.then(|| typer::paste(&text)).flatten() {
+                        Some(pasted) => pasted,
+                        None => typer.type_text(&text, &layout), // pasting not possible here
+                    }
                 }));
                 match typed {
                     Ok(Ok(())) => {}
@@ -374,11 +383,18 @@ fn worker() -> Result<()> {
     let rewriting = Arc::new(AtomicBool::new(false));
     watch_config(tx.clone(), reload_pending.clone());
     let indicator = indicator::Indicator::start(cfg.indicator, busy.clone());
+    // Just updated: say so (the old version left a note).
+    if let Ok(path) = platform::state_dir().map(|d| d.join(UPDATED_MARKER)) {
+        if let Ok(version) = std::fs::read_to_string(&path) {
+            let _ = std::fs::remove_file(&path);
+            info(&i18n::tf("upd.done", &[version.trim()]));
+        }
+    }
     // GNOME: the bubble is drawn by a small shell extension; keep it installed and up to
     // date while the indicator is on, remove it when switched off.
     #[cfg(target_os = "linux")]
     {
-        let on = cfg.indicator;
+        let on = cfg.indicator || cfg.paste; // the extension also pastes
         thread::spawn(move || {
             let done = if on {
                 overlay::ensure_extension().map(|i| {
@@ -580,7 +596,12 @@ fn worker() -> Result<()> {
                 } else if let Some(m) = pending_update.lock().unwrap().take() {
                     match update::swap(&m) {
                         Ok(()) => {
-                            info(&i18n::tf("upd.done", &[&m.version]));
+                            // Said by the new version once it runs: a notice sent right
+                            // before exiting gets lost (Windows drops it).
+                            if let Ok(dir) = platform::state_dir() {
+                                let _ = std::fs::write(dir.join(UPDATED_MARKER), &m.version);
+                            }
+                            println!("{}", i18n::tf("upd.done", &[&m.version]));
                             if supervisor::is_supervised() {
                                 std::process::exit(supervisor::UPDATED);
                             }
@@ -739,6 +760,9 @@ pub(crate) fn notification() -> notify_rust::Notification {
     }
     n
 }
+
+/// File in the state folder: "updated to this version", for the next start to announce.
+const UPDATED_MARKER: &str = "updated-to";
 
 /// A short desktop notification (not an error).
 fn info(msg: &str) {
@@ -945,11 +969,18 @@ fn test_type() -> Result<()> {
     let layout = layout::resolve(&cfg);
     println!("Typing with layout {layout}. Click into a text box. Typing in 3 seconds...");
     thread::sleep(Duration::from_secs(3));
-    t.type_text(
-        "Hello from vtt! Testing 1, 2, 3? (ok) geht's? Zürich, Größe, ß, @, €",
-        &layout::resolve(&cfg), // again: you may have switched layout meanwhile
-    )?;
-    println!("Done.");
+    let text = "Hello from vtt! Testing 1, 2, 3? (ok) geht's? Zürich, Größe, ß, @, €";
+    // The same way as dictation: pasted if that is on and possible here, else typed.
+    match cfg.paste.then(|| typer::paste(text)).flatten() {
+        Some(pasted) => {
+            pasted?;
+            println!("Done (pasted).");
+        }
+        None => {
+            t.type_text(text, &layout::resolve(&cfg))?; // again: the layout may have changed
+            println!("Done (typed).");
+        }
+    }
     Ok(())
 }
 
