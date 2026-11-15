@@ -137,13 +137,13 @@ fn icon(t: &VttTray) -> Icon {
 
 fn status(t: &VttTray) -> String {
     if t.session {
-        "Session running: transcribing".into()
+        crate::i18n::t("tray.status.session").into()
     } else if t.dictating {
-        "Listening...".into()
+        crate::i18n::t("tray.status.listening").into()
     } else if t.hold {
-        format!("Ready: hold {} to dictate", t.hotkey)
+        crate::i18n::tf("tray.status.hold", &[&t.hotkey])
     } else {
-        format!("Ready: press {} to dictate", t.hotkey)
+        crate::i18n::tf("tray.status.press", &[&t.hotkey])
     }
 }
 
@@ -152,8 +152,7 @@ fn with_key(label: &str, key: &str) -> String {
     if key.is_empty() { label.to_string() } else { format!("{label}\t{key}") }
 }
 
-const NOTES: [(&str, &str); 5] =
-    [("auto", "Automatic"), ("lecture", "Lecture notes"), ("meeting", "Meeting minutes"), ("summary", "Summary"), ("none", "None")];
+const NOTES: [&str; 5] = ["auto", "lecture", "meeting", "summary", "none"];
 
 fn menu(t: &VttTray) -> Menu {
     let item = |id: &str, label: &str| MenuItem::with_id(id, label, true, None);
@@ -162,43 +161,44 @@ fn menu(t: &VttTray) -> Menu {
 
     let mut items: Vec<Box<dyn IsMenuItem>> = vec![Box::new(MenuItem::new(status(t), false, None)), Box::new(sep())];
     if t.session {
-        items.push(Box::new(item("stop", "Stop session and write notes")));
+        items.push(Box::new(item("stop", crate::i18n::t("tray.stop_session"))));
     } else {
-        items.push(Box::new(item("session:system", &with_key("Transcribe what the computer plays", &t.shortcut_session))));
-        items.push(Box::new(item("session:mic", "Transcribe the microphone (room)")));
-        items.push(Box::new(item("session:both", &with_key("Transcribe a call (You / Others, headphones)", &t.shortcut_call))));
+        items.push(Box::new(item("session:system", &with_key(crate::i18n::t("tray.session_system"), &t.shortcut_session))));
+        items.push(Box::new(item("session:mic", crate::i18n::t("tray.session_mic"))));
+        items.push(Box::new(item("session:both", &with_key(crate::i18n::t("tray.session_call"), &t.shortcut_call))));
     }
-    items.push(Box::new(item("open", "Open transcripts folder")));
+    items.push(Box::new(item("open", crate::i18n::t("tray.open"))));
     items.push(Box::new(sep()));
-    items.push(Box::new(check("correction", &with_key("Spelling & grammar correction", &t.shortcut_correction), t.correct)));
+    items.push(Box::new(check("correction", &with_key(crate::i18n::t("tray.correction"), &t.shortcut_correction), t.correct)));
 
-    let hold = check("mode:hold", &format!("Hold {} while speaking", t.hotkey), t.hold);
-    let toggle = check("mode:toggle", &format!("Press {} to start, again to stop", t.hotkey), !t.hold);
-    if let Ok(m) = Submenu::with_items(with_key("Dictation key mode", &t.shortcut_mode), true, &[&hold, &toggle]) {
+    let hold = check("mode:hold", &crate::i18n::tf("tray.mode_hold", &[&t.hotkey]), t.hold);
+    let toggle = check("mode:toggle", &crate::i18n::tf("tray.mode_toggle", &[&t.hotkey]), !t.hold);
+    if let Ok(m) = Submenu::with_items(with_key(crate::i18n::t("tray.mode"), &t.shortcut_mode), true, &[&hold, &toggle]) {
         items.push(Box::new(m));
     }
 
-    let mut mic_items = vec![check("mic:", "System default", t.mic.is_empty())];
+    let mut mic_items = vec![check("mic:", crate::i18n::t("tray.mic_default"), t.mic.is_empty())];
     for (i, (name, desc)) in t.mics.iter().enumerate() {
         mic_items.push(check(&format!("mic:{i}"), desc, *name == t.mic));
     }
     let refs: Vec<&dyn IsMenuItem> = mic_items.iter().map(|m| m as &dyn IsMenuItem).collect();
-    if let Ok(m) = Submenu::with_items("Microphone", true, &refs) {
+    if let Ok(m) = Submenu::with_items(crate::i18n::t("tray.mic"), true, &refs) {
         items.push(Box::new(m));
     }
 
     let note_items: Vec<CheckMenuItem> =
-        NOTES.iter().map(|(k, label)| check(&format!("notes:{k}"), label, t.notes == *k)).collect();
+        NOTES.iter().map(|k| check(&format!("notes:{k}"), crate::i18n::t(&format!("notes.{k}")), t.notes == *k)).collect();
     let refs: Vec<&dyn IsMenuItem> = note_items.iter().map(|m| m as &dyn IsMenuItem).collect();
-    if let Ok(m) = Submenu::with_items("Notes after a session", true, &refs) {
+    if let Ok(m) = Submenu::with_items(crate::i18n::t("tray.notes"), true, &refs) {
         items.push(Box::new(m));
     }
-    items.push(Box::new(check("speakers", "Separate speakers (Speaker 1, 2 ...)", t.speakers)));
-    items.push(Box::new(check("keep", "Keep session audio (asks to delete)", t.keep_audio)));
-    items.push(Box::new(check("beeps", "Beeps", t.sounds)));
+    items.push(Box::new(check("speakers", crate::i18n::t("tray.speakers"), t.speakers)));
+    items.push(Box::new(check("keep", crate::i18n::t("tray.keep_audio"), t.keep_audio)));
+    items.push(Box::new(check("beeps", crate::i18n::t("tray.beeps"), t.sounds)));
     items.push(Box::new(sep()));
-    items.push(Box::new(item("settings", &with_key("All settings...", &t.shortcut_settings))));
-    items.push(Box::new(item("quit", "Quit Wortfluss")));
+    items.push(Box::new(item("settings", &with_key(crate::i18n::t("tray.settings"), &t.shortcut_settings))));
+    items.push(Box::new(item("updates", crate::i18n::t("tray.updates"))));
+    items.push(Box::new(item("quit", crate::i18n::t("tray.quit"))));
 
     let refs: Vec<&dyn IsMenuItem> = items.iter().map(|b| b.as_ref()).collect();
     Menu::with_items(&refs).unwrap_or_default()
@@ -221,6 +221,7 @@ fn action_for(t: &VttTray, id: &str) -> Option<Action> {
         "beeps" => Action::ToggleSounds,
         "settings" => Action::OpenSettings,
         "quit" => Action::Quit,
+        "updates" => Action::CheckUpdates,
         "mic:" => Action::SetMic(String::new()),
         _ => {
             if let Some(src) = id.strip_prefix("session:") {

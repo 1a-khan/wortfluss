@@ -42,6 +42,8 @@ pub enum Event {
     SessionKey,
     /// A keyboard shortcut or tray menu entry.
     Shortcut(Action),
+    /// A new version is downloaded and checked; install it when idle.
+    UpdateReady,
 }
 
 /// Something to do, triggered by a keyboard shortcut or the tray menu.
@@ -65,6 +67,8 @@ pub enum Action {
     OpenSettings,
     /// Rewrite the selected text in another tone.
     Rewrite,
+    /// Look for a new version now.
+    CheckUpdates,
     Quit,
 }
 

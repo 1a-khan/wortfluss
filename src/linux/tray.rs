@@ -94,13 +94,13 @@ impl VttTray {
 
     fn status(&self) -> String {
         if self.session {
-            "Session running: transcribing".into()
+            crate::i18n::t("tray.status.session").into()
         } else if self.dictating {
-            "Listening...".into()
+            crate::i18n::t("tray.status.listening").into()
         } else if self.hold {
-            format!("Ready: hold {} to dictate", self.hotkey)
+            crate::i18n::tf("tray.status.hold", &[&self.hotkey])
         } else {
-            format!("Ready: press {} to dictate", self.hotkey)
+            crate::i18n::tf("tray.status.press", &[&self.hotkey])
         }
     }
 }
@@ -154,22 +154,22 @@ impl ksni::Tray for VttTray {
 
         // Sessions
         if self.session {
-            menu.push(item("Stop session and write notes", Action::StopSession));
+            menu.push(item(crate::i18n::t("tray.stop_session"), Action::StopSession));
         } else {
-            menu.push(item(with_key("Transcribe what the computer plays", &self.shortcut_session), Action::StartSession("system".into())));
-            menu.push(item("Transcribe the microphone (room)", Action::StartSession("mic".into())));
-            menu.push(item(with_key("Transcribe a call (You / Others, headphones)", &self.shortcut_call), Action::StartSession("both".into())));
+            menu.push(item(with_key(crate::i18n::t("tray.session_system"), &self.shortcut_session), Action::StartSession("system".into())));
+            menu.push(item(crate::i18n::t("tray.session_mic"), Action::StartSession("mic".into())));
+            menu.push(item(with_key(crate::i18n::t("tray.session_call"), &self.shortcut_call), Action::StartSession("both".into())));
         }
-        menu.push(item("Open transcripts folder", Action::OpenTranscripts));
+        menu.push(item(crate::i18n::t("tray.open"), Action::OpenTranscripts));
         menu.push(MenuItem::Separator);
-        menu.push(item(with_key("Rewrite selected text...", &self.shortcut_rewrite), Action::Rewrite));
+        menu.push(item(with_key(crate::i18n::t("tray.rewrite"), &self.shortcut_rewrite), Action::Rewrite));
         menu.push(MenuItem::Separator);
 
         // Quick settings
-        menu.push(check(with_key("Spelling & grammar correction", &self.shortcut_correction), self.correct, Action::ToggleCorrection));
+        menu.push(check(with_key(crate::i18n::t("tray.correction"), &self.shortcut_correction), self.correct, Action::ToggleCorrection));
         menu.push(
             SubMenu {
-                label: with_key("Dictation key mode", &self.shortcut_mode),
+                label: with_key(crate::i18n::t("tray.mode"), &self.shortcut_mode),
                 submenu: vec![RadioGroup {
                     selected: if self.hold { 0 } else { 1 },
                     select: Box::new(|t: &mut VttTray, i| {
@@ -178,8 +178,8 @@ impl ksni::Tray for VttTray {
                         }
                     }),
                     options: vec![
-                        RadioItem { label: format!("Hold {} while speaking", self.hotkey), ..Default::default() },
-                        RadioItem { label: format!("Press {} to start, again to stop", self.hotkey), ..Default::default() },
+                        RadioItem { label: crate::i18n::tf("tray.mode_hold", &[&self.hotkey]), ..Default::default() },
+                        RadioItem { label: crate::i18n::tf("tray.mode_toggle", &[&self.hotkey]), ..Default::default() },
                     ],
                     ..Default::default()
                 }
@@ -190,11 +190,11 @@ impl ksni::Tray for VttTray {
         );
         let mut mic_names = vec![String::new()];
         mic_names.extend(self.mics.iter().map(|m| m.0.clone()));
-        let mut mic_items = vec![RadioItem { label: "System default".into(), ..Default::default() }];
+        let mut mic_items = vec![RadioItem { label: crate::i18n::t("tray.mic_default").into(), ..Default::default() }];
         mic_items.extend(self.mics.iter().map(|m| RadioItem { label: m.1.clone(), ..Default::default() }));
         menu.push(
             SubMenu {
-                label: "Microphone".into(),
+                label: crate::i18n::t("tray.mic").into(),
                 submenu: vec![RadioGroup {
                     selected: mic_names.iter().position(|n| *n == self.mic).unwrap_or(0),
                     select: Box::new(move |t: &mut VttTray, i| {
@@ -213,13 +213,13 @@ impl ksni::Tray for VttTray {
         let kinds = ["auto", "lecture", "meeting", "summary", "none"];
         menu.push(
             SubMenu {
-                label: "Notes after a session".into(),
+                label: crate::i18n::t("tray.notes").into(),
                 submenu: vec![RadioGroup {
                     selected: kinds.iter().position(|k| *k == self.notes).unwrap_or(0),
                     select: Box::new(move |t: &mut VttTray, i| t.send(Action::SetNotes(kinds[i].into()))),
-                    options: ["Automatic", "Lecture notes", "Meeting minutes", "Summary", "None"]
+                    options: kinds
                         .iter()
-                        .map(|l| RadioItem { label: (*l).into(), ..Default::default() })
+                        .map(|k| RadioItem { label: crate::i18n::t(&format!("notes.{k}")).into(), ..Default::default() })
                         .collect(),
                     ..Default::default()
                 }
@@ -228,12 +228,13 @@ impl ksni::Tray for VttTray {
             }
             .into(),
         );
-        menu.push(check("Separate speakers (Speaker 1, 2 ...)", self.speakers, Action::ToggleSpeakers));
-        menu.push(check("Keep session audio (asks to delete)", self.keep_audio, Action::ToggleKeepAudio));
-        menu.push(check("Beeps", self.sounds, Action::ToggleSounds));
+        menu.push(check(crate::i18n::t("tray.speakers"), self.speakers, Action::ToggleSpeakers));
+        menu.push(check(crate::i18n::t("tray.keep_audio"), self.keep_audio, Action::ToggleKeepAudio));
+        menu.push(check(crate::i18n::t("tray.beeps"), self.sounds, Action::ToggleSounds));
         menu.push(MenuItem::Separator);
-        menu.push(item(with_key("All settings...", &self.shortcut_settings), Action::OpenSettings));
-        menu.push(item("Quit Wortfluss", Action::Quit));
+        menu.push(item(with_key(crate::i18n::t("tray.settings"), &self.shortcut_settings), Action::OpenSettings));
+        menu.push(item(crate::i18n::t("tray.updates"), Action::CheckUpdates));
+        menu.push(item(crate::i18n::t("tray.quit"), Action::Quit));
         menu
     }
 }

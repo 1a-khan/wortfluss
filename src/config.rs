@@ -67,6 +67,10 @@ pub struct Config {
     pub shortcut_settings: String,
     /// Rewrite the selected text (correct it or change its tone).
     pub shortcut_rewrite: String,
+    /// Interface language: "auto" (the system's) or en, de, tr, es, pl, it.
+    pub ui_language: String,
+    /// Install new versions automatically (checked every few hours).
+    pub auto_update: bool,
     /// Show the tray icon.
     pub tray: bool,
     pub max_seconds: u64,
@@ -117,6 +121,8 @@ impl Default for Config {
             shortcut_mode: "Ctrl+Alt+H".into(),
             shortcut_settings: "Ctrl+Alt+V".into(),
             shortcut_rewrite: "Ctrl+Alt+R".into(),
+            ui_language: "auto".into(),
+            auto_update: true,
             tray: true,
             max_seconds: 120,
             piece_seconds: 30,
@@ -382,6 +388,14 @@ provider = {provider}
 # Empty = detect automatically (best if you switch languages).
 language = {language}
 
+# Language of the tray menu, notifications and rewrite window: "auto" (the system's)
+# or "en", "de", "tr", "es", "pl", "it".
+ui_language = {ui_language}
+
+# Install new versions automatically in the background (signed releases only;
+# switches when idle, never during a dictation or session). `vtt update` checks now.
+auto_update = {auto_update}
+
 # Phrases to spell exactly like this (names, brands, jargon), comma separated.
 # Easier: `vtt phrases add "Ahmad Khan, Groq"`. Example: "Ahmad Khan, Groq, Kubernetes"
 prompt = {prompt}
@@ -459,6 +473,8 @@ key_delay_ms = {delay}
 "#,
         provider = q(&c.provider),
         language = q(&c.language),
+        ui_language = q(&c.ui_language),
+        auto_update = c.auto_update,
         prompt = q(&c.prompt),
         correct = c.correct_text,
         hotkey = q(&c.hotkey),

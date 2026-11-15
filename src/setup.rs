@@ -150,6 +150,7 @@ pub enum Setting {
     Autostart,
     Session,
     Speakers,
+    UiLanguage,
     Shortcuts,
     Advanced,
 }
@@ -170,6 +171,7 @@ const SETTINGS: &[(Setting, &str, &[&str], &str)] = &[
     (Setting::Autostart, "autostart", &["login", "startup"], "Start at login"),
     (Setting::Session, "session", &["sessions", "notes", "lecture", "meeting"], "Session mode (lectures, meetings)"),
     (Setting::Speakers, "speakers", &["speaker", "diarization", "who"], "Separate speakers in sessions"),
+    (Setting::UiLanguage, "ui-language", &["interface", "ui", "sprache"], "Interface language (tray, notifications)"),
     (Setting::Shortcuts, "shortcuts", &["shortcut", "keys", "combos", "tray"], "Keyboard shortcuts & tray icon"),
     (Setting::Advanced, "advanced", &["spacing", "typing-speed", "pieces"], "Advanced (spacing, typing speed, pieces)"),
 ];
@@ -219,6 +221,13 @@ fn current_value(cfg: &Config, s: Setting) -> String {
         Setting::Shortcuts => {
             let n = cfg.shortcuts().len();
             format!("{n} shortcut(s), tray {}", if cfg.tray { "on" } else { "off" })
+        }
+        Setting::UiLanguage => {
+            let name = |l| crate::i18n::LANGS.iter().find(|x| x.0 == l).map(|x| x.2).unwrap_or("English");
+            match crate::i18n::from_code(&cfg.ui_language) {
+                Some(l) => name(l).to_string(),
+                None => format!("automatic ({})", name(crate::i18n::system().unwrap_or(crate::i18n::Lang::En))),
+            }
         }
         Setting::Speakers => {
             if cfg.session_speakers { format!("on ({})", cfg.active().speaker_model) } else { "off".into() }
@@ -366,6 +375,7 @@ fn change(t: &ColorfulTheme, cfg: &mut Config, s: Setting) -> Result<()> {
         Setting::Advanced => ask_advanced(t, cfg)?,
         Setting::Session => ask_session(t, cfg)?,
         Setting::Speakers => ask_speakers(t, cfg)?,
+        Setting::UiLanguage => ask_ui_language(t, cfg)?,
         Setting::Shortcuts => ask_shortcuts(t, cfg)?,
     }
     Ok(())
@@ -654,6 +664,19 @@ fn ask_mode(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
 
 /// Defaults for `vtt session start` and the session key.
 /// Speaker separation for sessions, and the model that does it.
+fn ask_ui_language(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
+    let mut items = vec!["Automatic (the system's language)".to_string()];
+    items.extend(crate::i18n::LANGS.iter().map(|l| l.2.to_string()));
+    let current = crate::i18n::LANGS.iter().position(|l| Some(l.0) == crate::i18n::from_code(&cfg.ui_language));
+    let i = Select::with_theme(t)
+        .with_prompt("Language of the tray menu, notifications and rewrite window")
+        .items(&items)
+        .default(current.map_or(0, |c| c + 1))
+        .interact()?;
+    cfg.ui_language = if i == 0 { "auto".into() } else { crate::i18n::LANGS[i - 1].1.into() };
+    Ok(())
+}
+
 fn ask_speakers(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
     let p = providers::get(&cfg.provider);
     let known = stt::speaker_models(p.id);

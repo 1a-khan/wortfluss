@@ -44,6 +44,15 @@ impl Source {
         }
     }
 
+    /// Key of the translated description (notifications).
+    pub fn text_key(self) -> &'static str {
+        match self {
+            Source::System => "source.system",
+            Source::Mic => "source.mic",
+            Source::Both => "source.both",
+        }
+    }
+
     pub fn describe(self) -> &'static str {
         match self {
             Source::System => "system audio (what the computer plays)",
@@ -259,7 +268,7 @@ fn run_supervised(args: &[String]) -> Result<()> {
         },
     );
     let _ = std::fs::remove_file(platform::runtime_file(STATE_FILE)?);
-    result
+    result.map(|_| ())
 }
 
 pub fn session_dir(cfg: &Config) -> Result<PathBuf> {
@@ -287,7 +296,7 @@ fn clock(secs: f32) -> String {
 }
 
 fn notify(msg: &str) {
-    let _ = crate::notification().summary("Wortfluss session").body(msg).timeout(8000).show();
+    let _ = crate::notification().summary(crate::i18n::t("session.title")).body(msg).timeout(8000).show();
 }
 
 /// A piece of one stream waiting to be transcribed.
@@ -307,9 +316,9 @@ pub fn run(args: &[String]) -> Result<()> {
     let mut opts = parse_options(args, &cfg)?;
     let speaker_warning = if opts.speakers && cfg.active().speaker_model.is_empty() {
         opts.speakers = false;
-        Some(format!(
-            "{} can't separate speakers; this session is transcribed without. Use OpenRouter, OpenAI or Mistral for that (`vtt set service`).",
-            cfg.active().provider.name
+        Some(crate::i18n::tf(
+            "session.no_speakers",
+            &[cfg.active().provider.name]
         ))
     } else {
         None
@@ -373,14 +382,12 @@ pub fn run(args: &[String]) -> Result<()> {
         println!("Press Ctrl+C to stop{}.\n", if opts.notes.is_some() { " and write the notes" } else { "" });
     }
     let no_headphones = opts.source == Source::Both && mics::output_is_headphones() == Some(false);
-    notify(&format!(
-        "Transcribing {}. Only record other people with their consent.{}\nStop: vtt session stop",
-        opts.source.describe(),
-        if no_headphones {
-            "\nUse headphones: with loudspeakers the other side may be transcribed twice."
-        } else {
-            ""
-        }
+    notify(&crate::i18n::tf(
+        "session.started",
+        &[
+            crate::i18n::t(opts.source.text_key()),
+            if no_headphones { crate::i18n::t("session.headphones") } else { "" },
+        ],
     ));
     if no_headphones {
         println!("Tip: use headphones; with loudspeakers the other side may be transcribed twice.");
@@ -502,7 +509,8 @@ pub fn run(args: &[String]) -> Result<()> {
     println!("{why}Session saved ({summary}): {}", path.display());
     drop(_lock);
     if audio_files.is_empty() {
-        notify(&format!("{why}Saved ({summary}):\n{}", path.display()));
+        let why = if stopped_quietly { crate::i18n::t("session.stopped_quiet") } else { "" };
+        notify(&crate::i18n::tf("session.saved", &[why, &summary, &path.display().to_string()]));
     } else {
         // Asked by a separate small process, so this session ends now.
         let p = path.to_string_lossy().to_string();
@@ -569,8 +577,8 @@ fn ask_delete_audio(transcript: &Path, files: &[PathBuf], cfg: &Config, saved: &
 fn ask_delete(body: &str) -> Option<String> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONQUESTION, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO};
     let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
-    let text = wide(&format!("{body}\n\nDelete the audio now?"));
-    let title = wide("Wortfluss: delete the session audio?");
+    let text = wide(&format!("{body}\n\n{}", crate::i18n::t("session.delete_now")));
+    let title = wide(crate::i18n::t("session.delete_title"));
     let r = unsafe {
         MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND)
     };
@@ -582,10 +590,10 @@ fn ask_delete(body: &str) -> Option<String> {
 fn ask_delete(body: &str) -> Option<String> {
     let (tx, rx) = mpsc::channel();
     let shown = crate::notification()
-        .summary("Wortfluss: delete the session audio?")
+        .summary(crate::i18n::t("session.delete_title"))
         .body(body)
-        .action("delete", "Delete audio")
-        .action("keep", "Keep for now")
+        .action("delete", crate::i18n::t("session.delete"))
+        .action("keep", crate::i18n::t("session.keep"))
         .timeout(notify_rust::Timeout::Never)
         .show();
     let handle = shown.ok()?;

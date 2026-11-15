@@ -3,6 +3,7 @@ mod config;
 mod correct;
 mod help;
 mod hotkey;
+mod i18n;
 mod icon;
 #[cfg(target_os = "linux")]
 #[path = "linux/layout.rs"]
@@ -38,6 +39,7 @@ mod typer;
 #[cfg(windows)]
 #[path = "windows/typer.rs"]
 mod typer;
+mod update;
 mod usage;
 
 use anyhow::{anyhow, bail, Result};
@@ -45,7 +47,7 @@ use config::{Config, Mode};
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst};
 use std::sync::mpsc::{self, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -107,6 +109,11 @@ fn run() -> Result<()> {
         Some("test-type") => test_type(),
         Some("test-mic") => test_mic(),
         Some("_rewrite") => rewrite::window(&args[1..]),
+        Some("update" | "upgrade") => update_now(),
+        Some("_release-keygen") => {
+            update::keygen(std::path::Path::new(args.get(1).ok_or_else(|| anyhow!("vtt _release-keygen KEYFILE"))?))
+        }
+        Some("_release-sign") => update::sign_release(&args[1..]),
         Some("_diarize") => {
             // developer test: vtt _diarize FILE.wav [MODEL] -> speaker segments
             let cfg = config::load()?;
@@ -172,7 +179,7 @@ fn daemon() -> Result<()> {
                 Err(e) => format!("{e:#}"),
                 Ok(c) => c.problem().unwrap_or_default(),
             };
-            report(&format!("vtt is not set up ({why}). Open a terminal and run: vtt setup"));
+            report(&i18n::tf("err.not_set_up", &[&why]));
             bail!("not set up: {why}");
         }
         println!("vtt isn't set up yet, so let's do that first.");
@@ -183,7 +190,7 @@ fn daemon() -> Result<()> {
     }
     // This process is the supervisor; the work runs in a child that is restarted if it
     // crashes (see supervisor.rs).
-    supervisor::supervise(
+    let outcome = supervisor::supervise(
         &supervisor::Policy {
             name: "Wortfluss",
             max_restarts: 5,
@@ -191,7 +198,59 @@ fn daemon() -> Result<()> {
             grace: Duration::from_secs(5),
         },
         |_| vec!["worker".to_string()],
-    )
+    )?;
+    if outcome == supervisor::Outcome::Updated {
+        // The worker installed a new version: start over with it (supervisor included).
+        drop(_lock);
+        return Err(platform::restart_self());
+    }
+    Ok(())
+}
+
+/// `vtt update`: install a newer version now, then restart the running Wortfluss.
+fn update_now() -> Result<()> {
+    println!("Wortfluss {} ({}). Looking for a new version...", update::current_version(), update::platform_id());
+    let Some(m) = update::check()? else {
+        println!("Up to date.");
+        return Ok(());
+    };
+    println!("Downloading {} ...", m.version);
+    update::download(&m)?;
+    update::swap(&m)?;
+    println!("Installed {}.", m.version);
+    if platform::running_pid().is_some() {
+        if session::is_running() {
+            println!("A session is running. Wortfluss switches to the new version after `vtt stop` and `vtt start`.");
+        } else {
+            platform::stop_running()?;
+            platform::start_background_with(&["run"])?;
+            println!("Wortfluss restarted with the new version.");
+        }
+    }
+    Ok(())
+}
+
+/// Look for a new version; when found, download and check it and tell the main loop.
+/// `manual`: the user asked (tray), so also say "up to date" and show errors.
+fn find_update(pending: &Mutex<Option<update::Manifest>>, tx: &mpsc::Sender<hotkey::Event>, manual: bool) {
+    let result = update::check().and_then(|found| match found {
+        Some(m) => {
+            update::download(&m)?;
+            Ok(Some(m))
+        }
+        None => Ok(None),
+    });
+    match result {
+        Ok(Some(m)) => {
+            eprintln!("update {} downloaded; installing when idle", m.version);
+            *pending.lock().unwrap() = Some(m);
+            let _ = tx.send(hotkey::Event::UpdateReady);
+        }
+        Ok(None) if manual => info(&i18n::tf("upd.none", &[update::current_version()])),
+        Ok(None) => {}
+        Err(e) if manual => report(&i18n::tf("upd.failed", &[&format!("{e:#}")])),
+        Err(e) => eprintln!("update check failed: {e:#}"),
+    }
 }
 
 /// The actual work: hotkey, recording, transcription, typing, tray. Normally started by
@@ -230,9 +289,9 @@ fn worker() -> Result<()> {
                 }));
                 match typed {
                     Ok(Ok(())) => {}
-                    Ok(Err(e)) => report(&format!("typing failed: {e:#}")),
+                    Ok(Err(e)) => report(&i18n::tf("err.typing", &[&format!("{e:#}")])),
                     Err(_) => {
-                        report("typing failed unexpectedly; the text was not typed");
+                        report(i18n::t("err.typing_crash"));
                         if let Ok(t) = typer::Typer::new(cfg.key_delay_ms) {
                             typer = t;
                         }
@@ -259,7 +318,7 @@ fn worker() -> Result<()> {
                         busy.fetch_sub(1, SeqCst);
                     }
                     Err(_) => {
-                        report("a piece of the recording failed unexpectedly and was skipped");
+                        report(i18n::t("err.piece_crash"));
                         busy.fetch_sub(1, SeqCst);
                     }
                 }
@@ -289,6 +348,19 @@ fn worker() -> Result<()> {
         });
     }
     let reload_pending = Arc::new(AtomicBool::new(false));
+    // Automatic updates: first look 2 minutes after the start, then every 6 hours.
+    update::cleanup();
+    let pending_update: Arc<Mutex<Option<update::Manifest>>> = Arc::default();
+    if cfg.auto_update {
+        let (pending, tx) = (pending_update.clone(), tx.clone());
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(120));
+            while pending.lock().unwrap().is_none() {
+                find_update(&pending, &tx, false);
+                thread::sleep(Duration::from_secs(6 * 3600));
+            }
+        });
+    }
     let rewriting = Arc::new(AtomicBool::new(false));
     watch_config(tx.clone(), reload_pending.clone());
 
@@ -410,17 +482,14 @@ fn worker() -> Result<()> {
                         println!("[skipped {:.0} s without speech]", clip.seconds());
                     }
                     if cfg.mode == Mode::Toggle && rec.quiet >= QUIET_STOP {
-                        report(&format!("recording stopped: no speech for {QUIET_STOP:.0} seconds"));
+                        report(&i18n::tf("msg.no_speech", &[&format!("{QUIET_STOP:.0}")]));
                         stop(&mut rec, &current);
                     }
                 }
             }
             (Mode::Hold, Up) | (Mode::Toggle, Down) => stop(&mut rec, &current),
             (_, Timeout(n)) if n == take && rec.recorder.is_some() => {
-                report(&format!(
-                    "recording stopped at the {} limit (change it with `vtt set mode`)",
-                    duration_text(cfg.max_seconds)
-                ));
+                report(&i18n::tf("msg.limit", &[&duration_text(cfg.max_seconds)]));
                 stop(&mut rec, &current);
             }
             (_, SessionKey) => handle_action(hotkey::Action::Session),
@@ -438,10 +507,35 @@ fn worker() -> Result<()> {
                                 }
                             }
                             Ok(None) => {}
-                            Err(e) => report(&format!("rewrite: {e:#}")),
+                            Err(e) => report(&i18n::tf("err.rewrite", &[&format!("{e:#}")])),
                         }
                         rewriting.store(false, SeqCst);
                     });
+                }
+            }
+            (_, Shortcut(hotkey::Action::CheckUpdates)) => {
+                let (pending, tx) = (pending_update.clone(), tx.clone());
+                thread::spawn(move || find_update(&pending, &tx, true));
+            }
+            (_, UpdateReady) => {
+                // Only when nothing is going on: no dictation, typing, rewrite window or session.
+                let idle = rec.recorder.is_none()
+                    && busy.load(SeqCst) == 0
+                    && !rewriting.load(SeqCst)
+                    && !session::is_running();
+                if !idle {
+                    after(Duration::from_secs(30), UpdateReady);
+                } else if let Some(m) = pending_update.lock().unwrap().take() {
+                    match update::swap(&m) {
+                        Ok(()) => {
+                            info(&i18n::tf("upd.done", &[&m.version]));
+                            if supervisor::is_supervised() {
+                                std::process::exit(supervisor::UPDATED);
+                            }
+                            return Err(platform::restart_self());
+                        }
+                        Err(e) => report(&i18n::tf("upd.failed", &[&format!("{e:#}")])),
+                    }
                 }
             }
             (_, Shortcut(action)) => handle_action(action),
@@ -467,7 +561,7 @@ fn worker() -> Result<()> {
                         }
                         return Err(platform::restart_self());
                     }
-                    Err(e) => report(&format!("new settings not applied: {e:#}")),
+                    Err(e) => report(&i18n::tf("err.settings_not_applied", &[&format!("{e:#}")])),
                 }
             }
             _ => {}
@@ -480,7 +574,6 @@ fn worker() -> Result<()> {
 /// the running vtt then restarts itself with them.
 fn handle_action(action: hotkey::Action) {
     use hotkey::Action::*;
-    let on = |b: bool| if b { "on" } else { "off" };
     match action {
         Session => session_toggle(None),
         CallSession => session_toggle(Some("both")),
@@ -488,41 +581,41 @@ fn handle_action(action: hotkey::Action) {
         StopSession => session_toggle(None),
         ToggleCorrection => change_setting(|c| {
             c.correct_text = !c.correct_text;
-            format!("Spelling & grammar correction {}", on(c.correct_text))
+            i18n::switched("tray.correction", c.correct_text)
         }),
         ToggleMode => change_setting(|c| {
             c.mode = if c.mode == Mode::Hold { Mode::Toggle } else { Mode::Hold };
             let key = hotkey::pretty(&c.hotkey);
             if c.mode == Mode::Hold {
-                format!("Hold {key} while you speak")
+                i18n::tf("tray.mode_hold", &[&key])
             } else {
-                format!("Press {key} to start, again to stop")
+                i18n::tf("tray.mode_toggle", &[&key])
             }
         }),
         ToggleSounds => change_setting(|c| {
             c.sounds = !c.sounds;
-            format!("Beeps {}", on(c.sounds))
+            i18n::switched("tray.beeps", c.sounds)
         }),
         ToggleKeepAudio => change_setting(|c| {
             c.session_keep_audio = !c.session_keep_audio;
-            format!("Keep session audio {}", on(c.session_keep_audio))
+            i18n::switched("set.keep_audio", c.session_keep_audio)
         }),
         ToggleSpeakers => change_setting(|c| {
             c.session_speakers = !c.session_speakers;
             if c.session_speakers && c.active().speaker_model.is_empty() {
                 c.session_speakers = false;
-                format!("{} can't separate speakers. Switch to OpenRouter, OpenAI or Mistral", c.active().provider.name)
+                i18n::tf("set.no_speakers", &[c.active().provider.name])
             } else {
-                format!("Separate speakers in sessions {}", on(c.session_speakers))
+                i18n::switched("set.speakers", c.session_speakers)
             }
         }),
         SetMic(name) => change_setting(move |c| {
             c.mic = name;
-            format!("Microphone: {}", mics::describe(&c.mic))
+            i18n::tf("msg.switched", &[i18n::t("tray.mic"), &mics::describe(&c.mic)])
         }),
         SetNotes(kind) => change_setting(move |c| {
             c.session_notes = kind;
-            format!("Notes after a session: {}", c.session_notes)
+            i18n::tf("msg.switched", &[i18n::t("tray.notes"), i18n::t(&format!("notes.{}", c.session_notes))])
         }),
         OpenTranscripts => {
             let result = config::load()
@@ -535,7 +628,7 @@ fn handle_action(action: hotkey::Action) {
                 report(&format!("{e:#}"));
             }
         }
-        Rewrite => {} // needs the typing thread: handled in the main loop
+        Rewrite | CheckUpdates => {} // need the main loop's state: handled there
         OpenSettings => {
             if let Err(e) = platform::open_in_terminal(&["setup"]) {
                 report(&format!("{e:#}"));
@@ -562,7 +655,7 @@ fn session_toggle(source: Option<&str>) {
             platform::start_background_with(&args)
         };
         if let Err(e) = result {
-            report(&format!("session: {e:#}"));
+            report(&i18n::tf("err.session", &[&format!("{e:#}")]));
         }
     });
 }
@@ -575,7 +668,7 @@ fn change_setting(f: impl FnOnce(&mut Config) -> String) {
     });
     match result {
         Ok(msg) => info(&msg),
-        Err(e) => report(&format!("setting not changed: {e:#}")),
+        Err(e) => report(&i18n::tf("err.setting_not_changed", &[&format!("{e:#}")])),
     }
 }
 
@@ -666,11 +759,8 @@ fn process(job: Job, cfg: &Config, text_tx: &Sender<String>) -> bool {
         Err(e) => {
             // Keep the audio so nothing said is lost.
             match save_failed(&wav, piece) {
-                Ok(path) => report(&format!(
-                    "{e:#}\nThe audio was saved ({}); `vtt retry` transcribes it later.",
-                    path.display()
-                )),
-                Err(save) => report(&format!("{e:#} (could not save the audio: {save:#})")),
+                Ok(path) => report(&i18n::tf("msg.audio_saved", &[&format!("{e:#}"), &path.display().to_string()])),
+                Err(save) => report(&i18n::tf("msg.audio_not_saved", &[&format!("{e:#}"), &format!("{save:#}")])),
             }
             return false;
         }

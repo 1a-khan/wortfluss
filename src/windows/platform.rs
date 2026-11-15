@@ -244,6 +244,16 @@ pub fn set_autostart(on: bool) -> Result<()> {
     Ok(())
 }
 
+/// After an update: the version Windows shows under "Installed apps" (the installer's
+/// per-user uninstall entry).
+pub fn set_installed_version(version: &str) {
+    let key = wide(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{6C3F8A1E-4B2D-4F7A-9E51-57A0D3C2B8F4}_is1");
+    let (name, data) = (wide("DisplayVersion"), wide(version));
+    unsafe {
+        RegSetKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), REG_SZ, data.as_ptr().cast(), (data.len() * 2) as u32);
+    }
+}
+
 /// Is this process alone in its console window (so the window closes when it ends)?
 pub fn owns_console() -> bool {
     use windows_sys::Win32::System::Console::GetConsoleProcessList;

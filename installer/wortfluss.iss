@@ -45,6 +45,11 @@ Source: "{#BinDir}\wortfluss.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "wortfluss.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 
+[UninstallDelete]
+; left behind by automatic updates (see src/update.rs)
+Type: files; Name: "{app}\*.old"
+Type: files; Name: "{app}\*.new"
+
 [Icons]
 Name: "{group}\Wortfluss"; Filename: "{app}\wortfluss.exe"; IconFilename: "{app}\wortfluss.ico"; Comment: "Start Wortfluss (tray icon)"
 Name: "{group}\Wortfluss settings"; Filename: "{app}\vtt.exe"; Parameters: "setup"; IconFilename: "{app}\wortfluss.ico"; Comment: "Service, API key, dictation key, microphone"

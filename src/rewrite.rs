@@ -10,6 +10,7 @@
 
 use crate::config::{self, Active};
 use crate::correct;
+use crate::i18n::t;
 use anyhow::{bail, Result};
 use eframe::egui;
 use std::io::Read;
@@ -28,37 +29,27 @@ explanations or alternatives.";
 
 pub struct Tone {
     pub id: &'static str,
-    de: &'static str,
-    en: &'static str,
     instruction: &'static str,
 }
 
 pub const TONES: &[Tone] = &[
     Tone {
         id: "correct",
-        de: "Korrigieren",
-        en: "Correct",
         instruction: "Only correct mistakes; keep the wording and style as they are.",
     },
     Tone {
         id: "professional",
-        de: "Professionell",
-        en: "Professional",
         instruction: "Rewrite it in a professional business tone: precise, factual and \
             well structured, with a proper greeting and closing if it is a message. Replace \
             colloquial words with business language.",
     },
     Tone {
         id: "casual",
-        de: "Zwanglos",
-        en: "Casual",
         instruction: "Make it casual and relaxed, as between friends or close colleagues. In \
             German use \"du\".",
     },
     Tone {
         id: "polite",
-        de: "Höflich",
-        en: "Polite",
         instruction: "Rewrite it noticeably more polite and friendly: soften requests (in \
             German e.g. \"Könnten wir ... bitte ...\"), add courteous words like please and \
             thank you, and show understanding where it fits. Keep the form of address \
@@ -66,15 +57,11 @@ pub const TONES: &[Tone] = &[
     },
     Tone {
         id: "social",
-        de: "#social",
-        en: "#social",
         instruction: "Make it a short, lively social media post and add a few fitting \
             hashtags at the end.",
     },
     Tone {
         id: "emojis",
-        de: "Emojis hinzufügen",
-        en: "Add emojis",
         instruction: "Keep the wording and add a few fitting emojis.",
     },
 ];
@@ -116,68 +103,12 @@ pub fn ask() -> Result<Option<String>> {
 
 // ---- the window (`vtt _rewrite`) ----------------------------------------------------
 
-fn german() -> bool {
-    #[cfg(windows)]
-    {
-        // LANG_GERMAN in the low 10 bits of the UI language.
-        unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() & 0x3ff == 0x07 }
-    }
-    #[cfg(not(windows))]
-    {
-        ["LC_ALL", "LC_MESSAGES", "LANG"]
-            .iter()
-            .find_map(|v| std::env::var(v).ok().filter(|s| !s.is_empty()))
-            .is_some_and(|l| l.starts_with("de"))
-    }
-}
-
-struct Words {
-    title: &'static str,
-    selected: &'static str,
-    suggestion: &'static str,
-    working: &'static str,
-    replace: &'static str,
-    copy: &'static str,
-    cancel: &'static str,
-    nothing: &'static str,
-    waiting: &'static str,
-    keys: &'static str,
-}
-
-const DE: Words = Words {
-    title: "Wortfluss – Text umschreiben",
-    selected: "Markierter Text",
-    suggestion: "Vorschlag",
-    working: "Wird umgeschrieben …",
-    replace: "Ersetzen",
-    copy: "Kopieren",
-    cancel: "Abbrechen",
-    nothing: "Kein Text markiert. Markiere Text in einer App und drücke das Tastenkürzel erneut.",
-    waiting: "Markierten Text lesen …",
-    keys: "Enter: ersetzen · 1–6: Stil · Esc: abbrechen",
-};
-
-const EN: Words = Words {
-    title: "Wortfluss – Rewrite text",
-    selected: "Selected text",
-    suggestion: "Suggestion",
-    working: "Rewriting …",
-    replace: "Replace",
-    copy: "Copy",
-    cancel: "Cancel",
-    nothing: "No text selected. Select text in an app and press the shortcut again.",
-    waiting: "Reading the selected text …",
-    keys: "Enter: replace · 1–6: tone · Esc: cancel",
-};
-
 enum Answer {
     Text(String),
     Failed(String),
 }
 
 struct App {
-    words: &'static Words,
-    de: bool,
     active: Active,
     model: String,
     original: Option<String>,
@@ -263,7 +194,6 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
         self.read_selection(ctx);
-        let w = self.words;
         let gave_up = self.original.is_none() && self.started.elapsed() > Duration::from_millis(1500);
 
         // Keys: Esc, Enter (Ctrl+Enter while editing the suggestion), 1-6.
@@ -308,15 +238,15 @@ impl eframe::App for App {
         egui::Panel::bottom("buttons").show(ui, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.weak(w.keys);
+                ui.weak(t("rw.keys"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add_enabled(ready, egui::Button::new(w.replace)).clicked() {
+                    if ui.add_enabled(ready, egui::Button::new(t("rw.replace"))).clicked() {
                         self.finish(ctx, true);
                     }
-                    if ui.add_enabled(ready, egui::Button::new(w.copy)).clicked() {
+                    if ui.add_enabled(ready, egui::Button::new(t("rw.copy"))).clicked() {
                         ctx.copy_text(self.shown.clone());
                     }
-                    if ui.button(w.cancel).clicked() {
+                    if ui.button(t("rw.cancel")).clicked() {
                         self.finish(ctx, false);
                     }
                 });
@@ -327,29 +257,29 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ui, |ui| {
             let Some(original) = self.original.clone() else {
                 ui.add_space(20.0);
-                ui.label(if gave_up { w.nothing } else { w.waiting });
+                ui.label(t(if gave_up { "rw.nothing" } else { "rw.waiting" }));
                 return;
             };
             ui.horizontal_wrapped(|ui| {
-                for (i, t) in TONES.iter().enumerate() {
-                    let label = if self.de { t.de } else { t.en };
+                for (i, tone) in TONES.iter().enumerate() {
+                    let label = t(&format!("tone.{}", tone.id));
                     if ui.selectable_label(i == self.tone, format!("{} {label}", i + 1)).clicked() {
                         self.ask_tone(i, ctx);
                     }
                 }
             });
             ui.separator();
-            ui.weak(w.selected);
+            ui.weak(t("rw.selected"));
             egui::ScrollArea::vertical().id_salt("orig").max_height(90.0).show(ui, |ui| {
                 ui.label(&original);
             });
             ui.add_space(8.0);
-            ui.strong(w.suggestion);
+            ui.strong(t("rw.suggestion"));
             match &current {
                 None => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(w.working);
+                        ui.label(t("rw.working"));
                     });
                 }
                 Some(Err(e)) => {
@@ -434,8 +364,7 @@ pub fn window(args: &[String]) -> Result<()> {
     #[cfg(not(windows))]
     let original: Option<String> = None;
 
-    let de = german();
-    let words = if de { &DE } else { &EN };
+    let title = t("rw.title");
     let icon = egui::IconData {
         rgba: crate::icon::rgba(64, crate::icon::State::Ready, true),
         width: 64,
@@ -443,7 +372,7 @@ pub fn window(args: &[String]) -> Result<()> {
     };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(words.title)
+            .with_title(title)
             .with_app_id("wortfluss")
             .with_inner_size([560.0, 400.0])
             .with_min_inner_size([380.0, 260.0])
@@ -454,7 +383,7 @@ pub fn window(args: &[String]) -> Result<()> {
     };
     let model = active.correction_model.clone();
     eframe::run_native(
-        words.title,
+        title,
         options,
         Box::new(move |cc| {
             #[cfg(target_os = "linux")]
@@ -467,8 +396,6 @@ pub fn window(args: &[String]) -> Result<()> {
                 }
             };
             let mut app = App {
-                words,
-                de,
                 active,
                 model,
                 original: None,
@@ -499,7 +426,7 @@ mod tests {
     #[test]
     fn tones_are_complete() {
         assert_eq!(TONES.len(), 6, "keys 1-6 pick them");
-        assert!(TONES.iter().all(|t| !t.instruction.is_empty() && !t.de.is_empty()));
+        assert!(TONES.iter().all(|x| !x.instruction.is_empty() && !t(&format!("tone.{}", x.id)).is_empty()));
         assert_eq!(TONES[0].id, "correct", "the first suggestion is the correction");
     }
 }

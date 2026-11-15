@@ -25,6 +25,16 @@ use std::time::{Duration, Instant};
 
 /// Exit code with which a child asks to be restarted right away (not counted as a crash).
 pub const RESTART: i32 = 75;
+/// Exit code with which a child says a new version was installed: the supervisor itself
+/// must restart too (it still runs the old program).
+pub const UPDATED: i32 = 76;
+
+/// How supervision ended.
+#[derive(PartialEq, Debug)]
+pub enum Outcome {
+    Done,
+    Updated,
+}
 /// Environment variable telling a child that it runs under a supervisor.
 pub const SUPERVISED: &str = "VTT_SUPERVISED";
 
@@ -72,7 +82,7 @@ fn describe(status: std::process::ExitStatus) -> String {
 
 /// Run `child_args(restart_number)` under supervision until it exits normally (0), the
 /// supervisor is asked to stop, or the restart intensity is exceeded.
-pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>) -> Result<()> {
+pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>) -> Result<Outcome> {
     platform::catch_stop_signals();
     let exe = platform::exe_path()?;
     let mut crashes: VecDeque<Instant> = VecDeque::new();
@@ -84,10 +94,11 @@ pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>
         let mut child: Child = cmd.spawn()?;
         let status = wait(&mut child, policy.grace)?;
         if platform::stop_requested() {
-            return Ok(()); // we were asked to stop; the child has finished
+            return Ok(Outcome::Done); // we were asked to stop; the child has finished
         }
         match status.code() {
-            Some(0) => return Ok(()),
+            Some(0) => return Ok(Outcome::Done),
+            Some(UPDATED) => return Ok(Outcome::Updated),
             Some(RESTART) => {
                 restarts += 1;
                 continue;
@@ -102,12 +113,14 @@ pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>
         }
         eprintln!("supervisor: {} {}", policy.name, describe(status));
         if crashes.len() > policy.max_restarts {
-            let msg = format!(
-                "{} stopped after {} crashes within {} s. See {}",
-                policy.name,
-                crashes.len(),
-                policy.within.as_secs(),
-                platform::log_file().map(|p| p.display().to_string()).unwrap_or_default()
+            let msg = crate::i18n::tf(
+                "sup.gave_up",
+                &[
+                    policy.name,
+                    &crashes.len().to_string(),
+                    &policy.within.as_secs().to_string(),
+                    &platform::log_file().map(|p| p.display().to_string()).unwrap_or_default(),
+                ],
             );
             let _ = crate::notification().summary("Wortfluss").body(&msg).show();
             bail!(msg);
@@ -117,14 +130,14 @@ pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>
         if crashes.len() == 1 {
             let _ = crate::notification()
                 .summary("Wortfluss")
-                .body(&format!("{} stopped unexpectedly and is being restarted.", policy.name))
+                .body(&crate::i18n::tf("sup.restarting", &[policy.name]))
                 .timeout(4000)
                 .show();
         }
         let until = Instant::now() + backoff;
         while Instant::now() < until {
             if platform::stop_requested() {
-                return Ok(());
+                return Ok(Outcome::Done);
             }
             std::thread::sleep(Duration::from_millis(100));
         }

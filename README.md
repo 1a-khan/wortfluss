@@ -249,6 +249,36 @@ vtt session run      supervisor: restarts a crashed session (transient child),
 - A session crash can lose the piece that was being recorded (up to ~30 s); the transcript
   marks the spot.
 
+## Interface languages
+
+The tray menu, notifications and the rewrite window speak English, German, Turkish, Spanish,
+Polish and Italian. They follow the system language; to choose one, `vtt set ui-language`
+(or `ui_language = "tr"` in config.toml). Terminal setup and `vtt help` are in English. The
+language you dictate in is a separate setting (`vtt set language`); dictation, correction and
+rewriting keep the language you speak or write in any case.
+
+## Automatic updates
+
+Like Teams or Postman, Wortfluss updates itself in the background: 2 minutes after it starts and
+then every 6 hours it looks for a new release, downloads it, checks it, and switches to it when it
+is idle (never during a dictation, a session or an open rewrite window). A notification says
+"Wortfluss was updated to version X". Tray → *Check for updates* or `vtt update` look right away;
+`auto_update = false` in config.toml turns it off.
+
+- **Where from:** releases of the public repository `1a-khan/wortfluss-releases` (binaries only).
+- **Safe:** each release has a `latest.json` (version, files, SHA-256) signed with the Wortfluss
+  release key (Ed25519). The public half is built into the program (`release-key.pub`); an update
+  is installed only if the signature, every file's hash and size match and the version is newer.
+- **No admin rights:** the program lives in a folder the user owns (Windows
+  `%LOCALAPPDATA%\Programs\Wortfluss`, Linux `~/.local/bin`). New files are written as
+  `NAME.new`, then swapped in by renaming (a running Windows .exe is renamed to `NAME.old` and
+  deleted at the next start).
+
+Publishing (maintainer): bump `version` in Cargo.toml, commit, push, wait for CI, then
+`scripts/release.sh 0.3.0 [notes.md]`. It tags the commit, signs the CI binaries with
+`~/.config/wortfluss-release/signing.key` and publishes them. **Back up that key** (password
+manager): without it no update can be published to existing installations.
+
 ## Windows
 
 The same program builds for Windows; only the operating-system parts differ

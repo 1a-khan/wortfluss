@@ -37,6 +37,7 @@ COMMANDS
     vtt              run in this terminal and show what is typed (good for testing)
     vtt usage        audio sent today / this month / all time, with cost
     vtt retry        transcribe pieces that failed earlier (e.g. no internet)
+    vtt update       install a new version now (automatic every 6 h; auto_update = false: off)
     vtt mics         list the microphones; choose one with `vtt set mic`
     vtt session start [title] [--source system|mic|both]   transcribe a lecture/meeting
     vtt session stop  stop it and write notes        vtt session status
