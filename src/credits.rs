@@ -6,8 +6,8 @@ pub const AUTHOR: &str = "Ammad Khan";
 pub const COMPANY: &str = "MIAK IT";
 pub const GITHUB: &str = "https://github.com/1a-khan";
 pub const REPO: &str = "https://github.com/1a-khan/wortfluss";
-/// The author's website; empty until set.
-pub const WEBSITE: &str = "";
+/// The author's website.
+pub const WEBSITE: &str = "https://miak-it.de";
 pub const LICENSE: &str = "Apache License 2.0";
 
 /// "Wortfluss 0.3.0 · Ammad Khan (MIAK IT)"

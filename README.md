@@ -310,11 +310,12 @@ not code-signed yet (SmartScreen warns once). Details: `vtt help windows`.
 
 ## License & credits
 
-Wortfluss is created by **Ammad Khan** ([MIAK IT](https://github.com/1a-khan)) and is open
+Wortfluss is created by **Ammad Khan** ([MIAK IT](https://miak-it.de)) and is open
 source under the [Apache License 2.0](LICENSE): free to use, change and share, also
 commercially. If you pass on Wortfluss or something built from it, include the
 [NOTICE](NOTICE) file so the original author is credited. The name "Wortfluss" and its logo
 are not part of the license; please give your own version its own name.
 
+- Website: https://miak-it.de
 - GitHub: https://github.com/1a-khan
 - Source: https://github.com/1a-khan/wortfluss

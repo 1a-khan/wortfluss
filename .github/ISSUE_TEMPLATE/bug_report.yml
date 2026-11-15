@@ -1,0 +1,45 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping to improve Wortfluss! Please **never paste API keys**, `secrets.env`,
+        or transcripts of other people here: issues are public.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Hold Right Ctrl and say ...\n2. ..."
+  - type: input
+    id: version
+    attributes:
+      label: Version (`vtt version`)
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: System
+      options: [Linux (GNOME), Linux (KDE), Linux (other), Windows 11, Windows 10]
+    validations:
+      required: true
+  - type: dropdown
+    id: service
+    attributes:
+      label: Speech service
+      options: [Groq, OpenRouter, OpenAI, Mistral, Custom]
+  - type: textarea
+    id: log
+    attributes:
+      label: Log (optional)
+      description: "Last lines of the log (Linux: ~/.local/state/vtt/vtt.log). Remove anything private."
+      render: text
