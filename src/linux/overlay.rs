@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use zbus::blocking::Connection;
 
-const UUID: &str = "wortfluss@miak-it.de";
+const UUID: &str = "wortfluss@mail.miak-it.com";
 const BUS_NAME: &str = "de.miakit.Wortfluss";
 const PATH: &str = "/de/miakit/Wortfluss/Indicator";
 const IFACE: &str = "de.miakit.Wortfluss.Indicator";

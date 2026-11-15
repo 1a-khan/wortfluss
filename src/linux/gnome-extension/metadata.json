@@ -1,5 +1,5 @@
 {
-  "uuid": "wortfluss@miak-it.de",
+  "uuid": "wortfluss@mail.miak-it.com",
   "name": "Wortfluss",
   "description": "Shows a small sound wave next to the text cursor while Wortfluss is listening. Installed and used by the Wortfluss dictation app.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],

@@ -122,7 +122,7 @@ you). After you stop, the bars turn into grey moving dots until the text is type
 - **Windows:** works in apps that report their text cursor (most classic Windows apps);
   elsewhere the bubble sits at the bottom center of the screen.
 - **Linux (GNOME):** apps can't place windows next to another app's cursor on Wayland, so
-  Wortfluss installs a tiny GNOME Shell extension (`wortfluss@miak-it.de`) that draws the
+  Wortfluss installs a tiny GNOME Shell extension (`wortfluss@mail.miak-it.com`) that draws the
   bubble. It finds the cursor through the accessibility interface (GTK apps, LibreOffice,
   Firefox...); elsewhere it uses the bottom center. **Log out and in once** after the first
   start so GNOME loads it. Other desktops: no bubble (tray icon and beeps still work).
