@@ -34,6 +34,7 @@ pub struct VttTray {
     shortcut_correction: String,
     shortcut_mode: String,
     shortcut_settings: String,
+    shortcut_rewrite: String,
 }
 
 /// Show the tray icon. None if the desktop has no tray (vtt works without it).
@@ -70,6 +71,7 @@ pub fn start(cfg: &Config, tx: Sender<Event>) -> Option<Handle> {
         shortcut_correction: combo(&cfg.shortcut_correction),
         shortcut_mode: combo(&cfg.shortcut_mode),
         shortcut_settings: combo(&cfg.shortcut_settings),
+        shortcut_rewrite: combo(&cfg.shortcut_rewrite),
     };
     match tray.spawn() {
         Ok(h) => Some(h),
@@ -159,6 +161,8 @@ impl ksni::Tray for VttTray {
             menu.push(item(with_key("Transcribe a call (You / Others, headphones)", &self.shortcut_call), Action::StartSession("both".into())));
         }
         menu.push(item("Open transcripts folder", Action::OpenTranscripts));
+        menu.push(MenuItem::Separator);
+        menu.push(item(with_key("Rewrite selected text...", &self.shortcut_rewrite), Action::Rewrite));
         menu.push(MenuItem::Separator);
 
         // Quick settings

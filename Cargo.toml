@@ -10,10 +10,12 @@ base64 = "0.23.1"
 chacha20poly1305 = "0.11.0"
 cpal = "0.15"                                   # microphone capture
 dialoguer = { version = "0.12.0", features = ["fuzzy-select"] }
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 getrandom = "0.4.3"
 keyring = "4.2.0"
 notify-rust = "4"                               # desktop notifications for errors (pure Rust D-Bus)
 png = "0.18.1"
+raw-window-handle = "0.6.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11.1"
@@ -28,12 +30,15 @@ evdev = "0.12"                                  # global hotkey + virtual keyboa
 gvdb = "0.10.1"                                 # reads GNOME's settings (keyboard layout)
 ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 pulseaudio = "0.3.2"                            # sound-server inputs and recording
+smithay-clipboard = "0.7.3"
 xkbcommon = { version = "0.9.0", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
+arboard = "3.7.0"
 tray-icon = "0.21"                              # notification-area icon with menu
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_System_Console",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",

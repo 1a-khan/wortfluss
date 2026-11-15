@@ -19,6 +19,7 @@ mod mics;
 mod notes;
 mod platform;
 mod providers;
+mod rewrite;
 mod session;
 mod speakers;
 #[cfg(target_os = "linux")]
@@ -105,6 +106,7 @@ fn run() -> Result<()> {
         }
         Some("test-type") => test_type(),
         Some("test-mic") => test_mic(),
+        Some("_rewrite") => rewrite::window(&args[1..]),
         Some("_diarize") => {
             // developer test: vtt _diarize FILE.wav [MODEL] -> speaker segments
             let cfg = config::load()?;
@@ -287,6 +289,7 @@ fn worker() -> Result<()> {
         });
     }
     let reload_pending = Arc::new(AtomicBool::new(false));
+    let rewriting = Arc::new(AtomicBool::new(false));
     watch_config(tx.clone(), reload_pending.clone());
 
     let a = cfg.active();
@@ -421,6 +424,26 @@ fn worker() -> Result<()> {
                 stop(&mut rec, &current);
             }
             (_, SessionKey) => handle_action(hotkey::Action::Session),
+            (_, Shortcut(hotkey::Action::Rewrite)) => {
+                // One window at a time; the accepted text is typed like dictated text.
+                if !rewriting.swap(true, SeqCst) {
+                    let (rewriting, busy, text_tx) = (rewriting.clone(), busy.clone(), text_tx.clone());
+                    thread::spawn(move || {
+                        match rewrite::ask() {
+                            Ok(Some(text)) => {
+                                thread::sleep(Duration::from_millis(250)); // focus back to the app
+                                busy.fetch_add(1, SeqCst);
+                                if text_tx.send(text).is_err() {
+                                    busy.fetch_sub(1, SeqCst);
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => report(&format!("rewrite: {e:#}")),
+                        }
+                        rewriting.store(false, SeqCst);
+                    });
+                }
+            }
             (_, Shortcut(action)) => handle_action(action),
             (Mode::Hold, OtherKey) if rec.recorder.is_some() => {
                 if rec.pieces == 0 {
@@ -512,6 +535,7 @@ fn handle_action(action: hotkey::Action) {
                 report(&format!("{e:#}"));
             }
         }
+        Rewrite => {} // needs the typing thread: handled in the main loop
         OpenSettings => {
             if let Err(e) = platform::open_in_terminal(&["setup"]) {
                 report(&format!("{e:#}"));

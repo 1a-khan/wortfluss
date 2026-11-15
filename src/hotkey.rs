@@ -63,6 +63,8 @@ pub enum Action {
     SetNotes(String),
     OpenTranscripts,
     OpenSettings,
+    /// Rewrite the selected text in another tone.
+    Rewrite,
     Quit,
 }
 

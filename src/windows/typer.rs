@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::thread::sleep;
 use std::time::Duration;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VK_RETURN, VK_TAB,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VK_RETURN, VK_SHIFT, VK_TAB,
 };
 
 /// Name of the virtual keyboard on Linux; on Windows our input is recognised as injected.
@@ -46,7 +46,13 @@ impl Typer {
     pub fn type_text(&mut self, text: &str, _layout: &Layout) -> Result<()> {
         for c in text.chars() {
             match c {
-                '\n' => send(&[input(VK_RETURN, 0, 0), input(VK_RETURN, 0, KEYEVENTF_KEYUP)])?,
+                // Shift+Enter: a new line that doesn't send the message in chat apps.
+                '\n' => send(&[
+                    input(VK_SHIFT, 0, 0),
+                    input(VK_RETURN, 0, 0),
+                    input(VK_RETURN, 0, KEYEVENTF_KEYUP),
+                    input(VK_SHIFT, 0, KEYEVENTF_KEYUP),
+                ])?,
                 '\t' => send(&[input(VK_TAB, 0, 0), input(VK_TAB, 0, KEYEVENTF_KEYUP)])?,
                 '\r' => {}
                 c => {

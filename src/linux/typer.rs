@@ -121,6 +121,17 @@ impl Typer {
     pub fn type_text(&mut self, text: &str, layout: &Layout) -> Result<()> {
         self.use_layout(layout)?;
         for c in normalize(text).chars() {
+            if c == '\r' {
+                continue;
+            }
+            if c == '\n' {
+                // Shift+Enter: a new line that doesn't send the message in chat apps.
+                self.key(Key::KEY_LEFTSHIFT, 1)?;
+                self.key(Key::KEY_ENTER, 1)?;
+                self.key(Key::KEY_ENTER, 0)?;
+                self.key(Key::KEY_LEFTSHIFT, 0)?;
+                continue;
+            }
             match self.map.get(&c) {
                 Some(&s) => self.press(s)?,
                 None => self.unicode(c)?,

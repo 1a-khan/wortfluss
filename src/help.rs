@@ -16,7 +16,15 @@ WITHOUT THE TERMINAL
     Tray icon (top bar): right-click for sessions and the common settings.
     Ctrl+Alt+S  session (what the computer plays)    Ctrl+Alt+M  call session
     Ctrl+Alt+K  correction on/off                    Ctrl+Alt+H  hold <-> toggle
-    Ctrl+Alt+V  all settings                         change them: vtt set shortcuts
+    Ctrl+Alt+V  all settings                         Ctrl+Alt+R  rewrite selected text
+    change them: vtt set shortcuts
+
+REWRITE SELECTED TEXT (like the writing assistant on phones)
+    Select text in any app, press Ctrl+Alt+R. A small window shows the corrected text right
+    away; pick a tone with the mouse or 1-6: Korrigieren, Professionell, Zwanglos, Höflich,
+    #social, Emojis hinzufügen. Edit the suggestion if you like, then Enter (Ersetzen) types
+    it over the selection; Copy puts it on the clipboard, Esc cancels. Uses the text model of
+    `vtt set correction` (about $0.0001 per suggestion). Labels are German on German systems.
 
 COMMANDS
     vtt setup        menu of all settings with current values; change one at a time

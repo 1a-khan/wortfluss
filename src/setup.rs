@@ -780,12 +780,13 @@ fn ask_shortcuts(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
     println!("  Shortcuts work everywhere while vtt runs. The focused app also receives them,");
     println!("  so use combinations your apps don't need (Ctrl+Alt+letter usually works).");
     loop {
-        let entries: [(&str, String); 5] = [
+        let entries: [(&str, String); 6] = [
             ("Start/stop a session", cfg.shortcut_session.clone()),
             ("Start/stop a call session (You / Others)", cfg.shortcut_call.clone()),
             ("Spelling correction on/off", cfg.shortcut_correction.clone()),
             ("Hold <-> toggle", cfg.shortcut_mode.clone()),
             ("Open the settings", cfg.shortcut_settings.clone()),
+            ("Rewrite the selected text (tone, correction)", cfg.shortcut_rewrite.clone()),
         ];
         let mut labels: Vec<String> = entries
             .iter()
@@ -831,7 +832,8 @@ fn ask_shortcuts(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
             1 => cfg.shortcut_call = value,
             2 => cfg.shortcut_correction = value,
             3 => cfg.shortcut_mode = value,
-            _ => cfg.shortcut_settings = value,
+            4 => cfg.shortcut_settings = value,
+            _ => cfg.shortcut_rewrite = value,
         }
     }
 }

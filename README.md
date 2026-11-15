@@ -78,6 +78,7 @@ on Ubuntu); KDE shows it natively.
 | Ctrl+Alt+K | spelling correction on/off |
 | Ctrl+Alt+H | hold <-> toggle |
 | Ctrl+Alt+V | open all settings |
+| Ctrl+Alt+R | rewrite the selected text (tone, correction) |
 
 Change them by pressing the new combination: `vtt set shortcuts`. They are read from the
 keyboard like the dictation key, so the focused app also receives them.
@@ -110,6 +111,29 @@ live, with `[hh:mm:ss]` times, and writes notes at the top when the session stop
 - Optional session key (press to start, again to stop) and defaults: `vtt set session`.
 - Cost for 1 hour: ~$0.01 transcript (OpenRouter Whisper Turbo) + ~$0.002 notes.
 - **Consent:** only record other people with their permission (in Germany § 201 StGB).
+
+## Rewrite selected text (writing assistant)
+
+Like the writing assistant on Samsung/Galaxy phones, in every app: select text, press
+**Ctrl+Alt+R** (or tray → *Rewrite selected text...*). A small window opens with the corrected
+text already suggested. Pick a tone with the mouse or the keys 1–6:
+
+| Key | Tone (German / English system) | What it does |
+|---|---|---|
+| 1 | Korrigieren / Correct | fixes spelling, grammar, punctuation; wording stays |
+| 2 | Professionell / Professional | business tone, greeting and closing for messages |
+| 3 | Zwanglos / Casual | relaxed, as between friends (German: du) |
+| 4 | Höflich / Polite | softened requests, please and thank you; keeps du/Sie |
+| 5 | #social | short social media post with hashtags |
+| 6 | Emojis hinzufügen / Add emojis | same text with fitting emojis |
+
+The suggestion can be edited. **Enter** (*Ersetzen*) types it over the selection like dictated
+text; line breaks are typed as Shift+Enter, so chat apps don't send early. *Kopieren* puts it on
+the clipboard, **Esc** cancels. The text keeps its language and is never answered or acted on.
+It uses the text model of `vtt set correction` (also when correction itself is off): about
+$0.0001 per suggestion. How the selection is read: Linux uses the primary selection (anything
+selected), Windows copies it with Ctrl+C and restores the clipboard afterwards. Up to 6000
+characters.
 
 ## Spelling & grammar correction (optional)
 

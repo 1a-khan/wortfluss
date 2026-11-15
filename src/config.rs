@@ -65,6 +65,8 @@ pub struct Config {
     pub shortcut_correction: String,
     pub shortcut_mode: String,
     pub shortcut_settings: String,
+    /// Rewrite the selected text (correct it or change its tone).
+    pub shortcut_rewrite: String,
     /// Show the tray icon.
     pub tray: bool,
     pub max_seconds: u64,
@@ -114,6 +116,7 @@ impl Default for Config {
             shortcut_correction: "Ctrl+Alt+K".into(),
             shortcut_mode: "Ctrl+Alt+H".into(),
             shortcut_settings: "Ctrl+Alt+V".into(),
+            shortcut_rewrite: "Ctrl+Alt+R".into(),
             tray: true,
             max_seconds: 120,
             piece_seconds: 30,
@@ -133,6 +136,7 @@ impl Default for Config {
 }
 
 /// Everything needed to send a request to the chosen provider.
+#[derive(Clone)]
 pub struct Active {
     pub provider: &'static providers::Provider,
     pub api_url: String,
@@ -230,6 +234,7 @@ impl Config {
             (&self.shortcut_correction, Action::ToggleCorrection),
             (&self.shortcut_mode, Action::ToggleMode),
             (&self.shortcut_settings, Action::OpenSettings),
+            (&self.shortcut_rewrite, Action::Rewrite),
         ]
         .into_iter()
         .filter_map(|(text, action)| Some((Combo::parse(text)?, action)))
@@ -433,6 +438,7 @@ shortcut_call = {sc_call}              # start/stop a call session (You / Others
 shortcut_correction = {sc_corr}        # spelling correction on/off
 shortcut_mode = {sc_mode}              # hold <-> toggle
 shortcut_settings = {sc_set}           # open the settings in a terminal
+shortcut_rewrite = {sc_rewrite}          # rewrite the selected text (correct, polite, casual ...)
 
 # Icon in the system tray with a menu (right-click) for the common settings
 tray = {tray}
@@ -473,6 +479,7 @@ key_delay_ms = {delay}
         sc_corr = q(&c.shortcut_correction),
         sc_mode = q(&c.shortcut_mode),
         sc_set = q(&c.shortcut_settings),
+        sc_rewrite = q(&c.shortcut_rewrite),
         tray = c.tray,
         piece = c.piece_seconds,
         space = c.add_trailing_space,
