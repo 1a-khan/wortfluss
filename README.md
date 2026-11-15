@@ -112,6 +112,23 @@ live, with `[hh:mm:ss]` times, and writes notes at the top when the session stop
 - Cost for 1 hour: ~$0.01 transcript (OpenRouter Whisper Turbo) + ~$0.002 notes.
 - **Consent:** only record other people with their permission (in Germany § 201 StGB).
 
+## Listening indicator
+
+While Wortfluss listens, a small bubble with a live sound wave appears right next to the
+text cursor, so you see at a glance that it is taking dictation (and that the mic hears
+you). After you stop, the bars turn into grey moving dots until the text is typed.
+
+- Hold mode shows it after 250 ms, so shortcuts like Ctrl+C don't flash it.
+- **Windows:** works in apps that report their text cursor (most classic Windows apps);
+  elsewhere the bubble sits at the bottom center of the screen.
+- **Linux (GNOME):** apps can't place windows next to another app's cursor on Wayland, so
+  Wortfluss installs a tiny GNOME Shell extension (`wortfluss@miak-it.de`) that draws the
+  bubble. It finds the cursor through the accessibility interface (GTK apps, LibreOffice,
+  Firefox...); elsewhere it uses the bottom center. **Log out and in once** after the first
+  start so GNOME loads it. Other desktops: no bubble (tray icon and beeps still work).
+- Off: `vtt set indicator` (on GNOME this also removes the extension).
+- Preview without speaking: `vtt _indicator-demo`.
+
 ## Rewrite selected text (writing assistant)
 
 Like the writing assistant on Samsung/Galaxy phones, in every app: select text, press

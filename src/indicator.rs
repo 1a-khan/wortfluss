@@ -191,6 +191,91 @@ pub fn bars(mode: Mode, level: f32, t: f32) -> [f32; BARS] {
     h
 }
 
+// --- Drawing (Windows draws the bubble itself; GNOME's look is in stylesheet.css) ---
+
+const BUBBLE_W: f32 = 60.0; // logical pixels, like the GNOME bubble
+const BUBBLE_H: f32 = 28.0;
+const BAR_W: f32 = 3.0;
+const BAR_GAP: f32 = 3.0;
+const BAR_MAX: f32 = 16.0;
+
+/// Pixel size of the bubble at a display scale (1.0 = 96 dpi).
+#[allow(dead_code)] // used by the Windows overlay
+pub fn render_size(scale: f32) -> (i32, i32) {
+    ((BUBBLE_W * scale).round() as i32, (BUBBLE_H * scale).round() as i32)
+}
+
+/// One frame as premultiplied 0xAARRGGBB pixels, rows top to bottom.
+#[allow(dead_code)] // used by the Windows overlay
+pub fn render(mode: Mode, level: f32, t: f32, scale: f32) -> Vec<u32> {
+    let (w, h) = render_size(scale);
+    let (wf, hf) = (w as f32, h as f32);
+    let heights = bars(mode, level, t);
+    let bar_color = match mode {
+        Mode::Listening => (0xff, 0x5a, 0x5f),
+        Mode::Working => (0xb8, 0xbc, 0xc6),
+    };
+    let (bw, gap) = (BAR_W * scale, BAR_GAP * scale);
+    let total = BARS as f32 * bw + (BARS - 1) as f32 * gap;
+    let left = (wf - total) / 2.0;
+    let mut out = vec![0u32; (w * h) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            // pill: background with a thin light border, soft edge
+            let d = rounded_rect(px, py, 0.0, 0.0, wf, hf, hf / 2.0);
+            let fill = (0.5 - d).clamp(0.0, 1.0);
+            if fill <= 0.0 {
+                continue;
+            }
+            let border = ((d + scale).clamp(0.0, 1.0)) * fill; // last pixel(s) inside the edge
+            let mut c = blend((28, 28, 32, 0.88 * fill), (255, 255, 255, 0.14 * border));
+            // bars
+            let i = ((px - left) / (bw + gap)).floor();
+            if i >= 0.0 && (i as usize) < BARS {
+                let bx = left + i * (bw + gap);
+                let bh = (heights[i as usize] * BAR_MAX * scale).max(3.0 * scale);
+                let by = (hf - bh) / 2.0;
+                let bd = rounded_rect(px, py, bx, by, bw, bh, bw / 2.0);
+                let cover = (0.5 - bd).clamp(0.0, 1.0);
+                if cover > 0.0 {
+                    c = blend(c, (bar_color.0, bar_color.1, bar_color.2, cover));
+                }
+            }
+            out[(y * w + x) as usize] = premultiplied(c);
+        }
+    }
+    out
+}
+
+/// Signed distance from a point to a rounded rectangle (negative inside).
+fn rounded_rect(px: f32, py: f32, x: f32, y: f32, w: f32, h: f32, r: f32) -> f32 {
+    let r = r.min(w / 2.0).min(h / 2.0);
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let qx = (px - cx).abs() - (w / 2.0 - r);
+    let qy = (py - cy).abs() - (h / 2.0 - r);
+    let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
+    outside + qx.max(qy).min(0.0) - r
+}
+
+type Rgba = (u8, u8, u8, f32);
+
+/// `top` over `under` (straight alpha).
+fn blend(under: Rgba, top: Rgba) -> Rgba {
+    let a = top.3 + under.3 * (1.0 - top.3);
+    if a <= 0.0 {
+        return (0, 0, 0, 0.0);
+    }
+    let mix = |t: u8, u: u8| ((t as f32 * top.3 + u as f32 * under.3 * (1.0 - top.3)) / a).round() as u8;
+    (mix(top.0, under.0), mix(top.1, under.1), mix(top.2, under.2), a)
+}
+
+fn premultiplied((r, g, b, a): Rgba) -> u32 {
+    let a8 = (a.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let p = |c: u8| (c as u32 * a8 + 127) / 255;
+    (a8 << 24) | (p(r) << 16) | (p(g) << 8) | p(b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,5 +304,26 @@ mod tests {
         let loud = bars(Mode::Listening, 1.0, 0.0);
         assert!(quiet.iter().all(|h| *h < 0.2));
         assert!(loud[BARS / 2] > 0.5);
+    }
+
+    #[test]
+    fn render_draws_a_pill_with_bars() {
+        for scale in [1.0, 1.5, 2.0] {
+            let (w, h) = render_size(scale);
+            let px = render(Mode::Listening, 1.0, 0.0, scale);
+            assert_eq!(px.len(), (w * h) as usize);
+            let at = |x: i32, y: i32| px[(y * w + x) as usize];
+            assert_eq!(at(0, 0) >> 24, 0, "corner transparent");
+            let alpha = at(w / 2, h / 2) >> 24;
+            assert!(alpha > 200, "middle opaque: {alpha}");
+            // middle bar is red at full level: red channel well above blue
+            let c = at(w / 2, h / 2);
+            assert!((c >> 16 & 0xff) > (c & 0xff) + 50, "{c:08x}");
+            // premultiplied: no channel above alpha
+            for p in &px {
+                let a = p >> 24;
+                assert!((p >> 16 & 0xff) <= a && (p >> 8 & 0xff) <= a && (p & 0xff) <= a);
+            }
+        }
     }
 }
