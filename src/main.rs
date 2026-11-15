@@ -541,10 +541,20 @@ fn worker() -> Result<()> {
                     let (rewriting, busy, text_tx) = (rewriting.clone(), busy.clone(), text_tx.clone());
                     thread::spawn(move || {
                         match rewrite::ask() {
-                            Ok(Some(text)) => {
+                            #[cfg(windows)]
+                            Ok(Some(accepted)) => {
+                                busy.fetch_add(1, SeqCst);
+                                if let Err(e) = rewrite::paste(&accepted) {
+                                    report(&i18n::tf("err.rewrite", &[&format!("{e:#}")]));
+                                }
+                                busy.fetch_sub(1, SeqCst);
+                                let _ = &text_tx;
+                            }
+                            #[cfg(not(windows))]
+                            Ok(Some(accepted)) => {
                                 thread::sleep(Duration::from_millis(250)); // focus back to the app
                                 busy.fetch_add(1, SeqCst);
-                                if text_tx.send(text).is_err() {
+                                if text_tx.send(accepted.text).is_err() {
                                     busy.fetch_sub(1, SeqCst);
                                 }
                             }

@@ -73,6 +73,10 @@ pub fn chat(
         }
         Err(e) => bail!("{e}"),
     };
+    // OpenRouter reports some provider failures with status 200 and an error object.
+    if let Some(msg) = json["error"]["message"].as_str() {
+        bail!("{msg}");
+    }
     let mut out = json["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("")

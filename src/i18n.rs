@@ -516,6 +516,16 @@ const TEXTS: &[Row] = &[
     ("rw.working", ["Rewriting …", "Wird umgeschrieben …", "Yeniden yazılıyor…", "Reescribiendo…", "Redaguję…", "Riscrittura in corso…"]),
     ("rw.replace", ["Replace", "Ersetzen", "Değiştir", "Reemplazar", "Zastąp", "Sostituisci"]),
     ("rw.copy", ["Copy", "Kopieren", "Kopyala", "Copiar", "Kopiuj", "Copia"]),
+    ("rw.copied", ["Copied ✔", "Kopiert ✔", "Kopyalandı ✔", "Copiado ✔", "Skopiowano ✔", "Copiato ✔"]),
+    ("rw.retry", ["Try again", "Erneut versuchen", "Tekrar dene", "Reintentar", "Spróbuj ponownie", "Riprova"]),
+    ("rw.not_back", [
+        "The app with the selection is no longer in front. The new text is in the clipboard: paste it with Ctrl+V.",
+        "Die App mit der Markierung ist nicht mehr im Vordergrund. Der neue Text ist in der Zwischenablage: mit Strg+V einfügen.",
+        "Seçimin bulunduğu uygulama artık önde değil. Yeni metin panoda: Ctrl+V ile yapıştırın.",
+        "La aplicación con la selección ya no está en primer plano. El texto nuevo está en el portapapeles: pégalo con Ctrl+V.",
+        "Aplikacja z zaznaczeniem nie jest już na pierwszym planie. Nowy tekst jest w schowku: wklej go Ctrl+V.",
+        "L'app con la selezione non è più in primo piano. Il nuovo testo è negli appunti: incollalo con Ctrl+V.",
+    ]),
     ("rw.cancel", ["Cancel", "Abbrechen", "İptal", "Cancelar", "Anuluj", "Annulla"]),
     ("rw.nothing", [
         "No text selected. Select text in an app and press the shortcut again.",
