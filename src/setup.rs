@@ -309,6 +309,29 @@ pub fn set(name: Option<&str>) -> Result<()> {
     save_now(&cfg)
 }
 
+/// Menu lines cut to the terminal's width: a line that wraps makes the menu redraw
+/// itself below the old one again and again on every key press.
+fn fit(labels: &[String]) -> Vec<String> {
+    let width = dialoguer::console::Term::stdout().size().1 as usize;
+    let max = width.saturating_sub(6).max(20); // "  ❯ " in front, one spare column
+    labels
+        .iter()
+        .map(|l| {
+            if dialoguer::console::measure_text_width(l) <= max {
+                l.clone()
+            } else {
+                dialoguer::console::truncate_str(l, max, "…").into_owned()
+            }
+        })
+        .collect()
+}
+
+/// How many menu lines fit in the terminal (prompt, page line and a spare line besides).
+fn rows(wanted: usize) -> usize {
+    let height = dialoguer::console::Term::stdout().size().0 as usize;
+    wanted.min(height.saturating_sub(4)).max(3)
+}
+
 fn menu() -> Result<()> {
     let t = ColorfulTheme::default();
     let mut cfg = load_for_setup();
@@ -322,9 +345,9 @@ fn menu() -> Result<()> {
         labels.push("Done".into());
         let i = Select::with_theme(&t)
             .with_prompt("What do you want to change?")
-            .items(&labels)
+            .items(fit(&labels))
             .default(labels.len() - 1)
-            .max_length(16)
+            .max_length(rows(16))
             .interact()?;
         if i == labels.len() - 1 {
             return Ok(());
@@ -1157,12 +1180,12 @@ fn ask_model(
         Pick::Keep => current,
         Pick::Recommended(id) => id.to_string(),
         Pick::List => {
-            let labels: Vec<&str> = entries.iter().map(|(_, l)| l.as_str()).collect();
+            let labels: Vec<String> = entries.iter().map(|(_, l)| l.clone()).collect();
             let j = FuzzySelect::with_theme(t)
                 .with_prompt("Type to filter, arrows to move, Enter to choose")
-                .items(&labels)
+                .items(fit(&labels))
                 .default(entries.iter().position(|(id, _)| *id == current).unwrap_or(0))
-                .max_length(15)
+                .max_length(rows(15))
                 .interact()?;
             entries[j].0.clone()
         }
@@ -1240,12 +1263,12 @@ fn ask_correction(t: &ColorfulTheme, cfg: &mut Config, p: &providers::Provider) 
             if entries.is_empty() {
                 Input::with_theme(t).with_prompt("Model name").default(current).interact_text()?
             } else {
-                let labels: Vec<&str> = entries.iter().map(|(_, l)| l.as_str()).collect();
+                let labels: Vec<String> = entries.iter().map(|(_, l)| l.clone()).collect();
                 let j = FuzzySelect::with_theme(t)
                     .with_prompt("Type to filter, arrows to move, Enter to choose")
-                    .items(&labels)
+                    .items(fit(&labels))
                     .default(entries.iter().position(|(id, _)| *id == current).unwrap_or(0))
-                    .max_length(15)
+                    .max_length(rows(15))
                     .interact()?;
                 entries[j].0.clone()
             }

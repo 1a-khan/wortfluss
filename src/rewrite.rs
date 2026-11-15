@@ -344,7 +344,7 @@ impl eframe::App for App {
 fn copy_selection() -> Option<String> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
     // Wait until the shortcut's keys are released (Ctrl+Alt+C would not copy).
-    wait_keys_released();
+    crate::typer::wait_keys_released();
     let mut cb = arboard::Clipboard::new().ok()?;
     let before = cb.get_text().ok();
     let _ = cb.clear();
@@ -377,33 +377,14 @@ fn copy_selection() -> Option<String> {
     text
 }
 
-/// Windows: wait (at most 3 s) until no modifier, Enter or Escape key is held, so
-/// they don't mix with keys we send (Ctrl still held from Ctrl+Enter turns typing into
-/// shortcuts).
-#[cfg(windows)]
-fn wait_keys_released() {
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
-    let start = Instant::now();
-    while [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN, VK_RETURN, VK_ESCAPE]
-        .iter()
-        .any(|&k| unsafe { GetAsyncKeyState(k as i32) } as u16 & 0x8000 != 0)
-    {
-        if start.elapsed() > Duration::from_secs(3) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 /// Windows (in the running vtt): put the accepted text over the selection. Pasted, not
 /// typed: one step, so autocomplete and slow apps can't mix it up, and only once the
 /// app with the selection is back in front. Otherwise the text is left in the
 /// clipboard and Err tells the user.
 #[cfg(windows)]
 pub fn paste(a: &Accepted) -> Result<()> {
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
-    wait_keys_released();
+    crate::typer::wait_keys_released();
     let target = a.window as windows_sys::Win32::Foundation::HWND;
     let in_front = || {
         let fg = unsafe { GetForegroundWindow() };
@@ -416,31 +397,19 @@ pub fn paste(a: &Accepted) -> Result<()> {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    let mut cb = arboard::Clipboard::new().map_err(|e| anyhow::anyhow!("clipboard: {e}"))?;
-    let before = cb.get_text().ok();
-    cb.set_text(a.text.clone()).map_err(|e| anyhow::anyhow!("clipboard: {e}"))?;
     if !in_front() {
+        // Leave the text where the user can still get it.
+        if let Ok(mut cb) = arboard::Clipboard::new() {
+            let _ = cb.set_text(a.text.clone());
+        }
         bail!("{}", t("rw.not_back"));
     }
     std::thread::sleep(Duration::from_millis(80)); // the app settles after getting the focus
-    let key = |vk: u16, up: bool| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: if up { KEYEVENTF_KEYUP } else { 0 }, time: 0, dwExtraInfo: 0 },
-        },
-    };
-    let inputs = [key(VK_CONTROL, false), key(b'V' as u16, false), key(b'V' as u16, true), key(VK_CONTROL, true)];
-    let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
-    if sent as usize != inputs.len() {
-        bail!("{}", t("rw.not_back"));
+    match crate::typer::paste(&a.text) {
+        Ok(()) => Ok(()),
+        Err(crate::typer::Pasting::Blocked(e)) => Err(e),
+        Err(crate::typer::Pasting::NoClipboard) => bail!("the clipboard is in use by another program"),
     }
-    // Apps read the clipboard when they handle the paste; give them time, then put the
-    // user's clipboard back.
-    std::thread::sleep(Duration::from_millis(600));
-    if let Some(b) = before {
-        let _ = cb.set_text(b);
-    }
-    Ok(())
 }
 
 /// `vtt _rewrite [--auto TONE]`: the window.
