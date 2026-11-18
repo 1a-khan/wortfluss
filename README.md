@@ -29,7 +29,7 @@ within a few seconds.
 | `vtt set <setting>` | change one thing: service, model, key, correction, phrases, language, hotkey, mode, ... |
 | `vtt phrases [add\|remove\|clear]` | names and words to spell right |
 | `vtt mics` / `vtt set mic` | list microphones / choose one (with a 3-second test) |
-| `vtt retry` | transcribe pieces that failed earlier (e.g. no internet) |
+| `vtt retry [FILE]` | transcribe pieces that failed earlier (e.g. no internet); fills the gaps in session transcripts |
 | `vtt session start [title] [--source system\|mic\|both]` | transcribe a lecture, video or meeting into a Markdown file |
 | `vtt session stop` / `status` | stop (notes are written) / show the running session |
 | `vtt notes FILE [lecture\|meeting\|summary]` | (re)write notes for a transcript |
@@ -297,13 +297,29 @@ vtt session run      supervisor: restarts a crashed session (transient child),
 ```
 
 - Restart intensity like OTP: more than 5 crashes in 60 s (sessions: 3 in 5 min) and the
-  supervisor gives up with a notification instead of looping; back-off 1, 2, 4 ... 30 s.
+  supervisor stops restarting, with a notification, instead of looping; back-off 1, 2, 4
+  ... 30 s. Dictation then tries again after 5 minutes (the cause may pass).
+- The child watches its supervisor too: if that is killed or crashes, the dictation worker
+  hands over to a fresh `vtt run` (when idle) and a session carries on by itself, so an
+  orphaned worker can never run alongside a new one and type twice.
 - A settings change is a clean, requested restart (exit code 75), not a crash.
 - `vtt stop` / tray Quit / Ctrl+C stop the child first and give it time to finish (a
   session finishes its last piece and the notes).
 - Crashes are logged in `~/.local/state/vtt/vtt.log`; the first one shows a notification.
 - A session crash can lose the piece that was being recorded (up to ~30 s); the transcript
   marks the spot.
+
+**Session: no internet, service down.** Recording never depends on the network. A piece
+that can't be transcribed gets a marker in the transcript (`_[not transcribed yet …]_`)
+and its audio is kept; a notification says so once. While the service is unreachable, new
+pieces are marked right away and one is tried every 5 s, growing to 60 s. As soon as one
+works, every marker is replaced by its text, in place, and a notification says how many
+were filled in. Parts still missing when the session ends: `vtt retry FILE` (or `vtt
+retry` for all transcripts in the session folder).
+
+**Session: sound device gone.** If the sound system restarts or a device disappears, the
+recording is reopened every 2 s (a notification after 10 s, and again when it records);
+the transcript times stay right.
 
 ## Interface languages
 

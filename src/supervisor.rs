@@ -8,10 +8,17 @@
 //!
 //! Like OTP's restart intensity: more than `max_restarts` crashes within `within` means
 //! something is really broken, so the supervisor gives up and says so instead of
-//! looping. Between restarts it waits 1, 2, 4 ... up to 30 s. A child can ask for a clean
+//! looping (or, with `retry_after`, pauses that long and starts over: the cause may
+//! pass, e.g. a restarting sound system). Between restarts it waits 1, 2, 4 ... up to 30 s. A child can ask for a clean
 //! restart (exit code `RESTART`, e.g. after the settings changed); that is not a crash.
 //! Stopping the supervisor (Ctrl+C, SIGTERM from `vtt stop`) stops the child first and
 //! gives it time to finish (e.g. a session writing its notes).
+//!
+//! The other way round, a child watches its supervisor (`supervisor_gone`): if that is
+//! killed or crashes, the dictation worker starts a fresh `vtt run --after PID` and
+//! exits, and a session worker takes over the session lock and carries on. Otherwise an
+//! orphaned worker would run unsupervised and unlocked, and the next start would type
+//! everything twice.
 //!
 //! Inside the worker, threads follow the same idea at a smaller scale (see main.rs and
 //! hotkey.rs): keyboard readers are re-attached by a manager, and typing/transcription
@@ -37,6 +44,8 @@ pub enum Outcome {
 }
 /// Environment variable telling a child that it runs under a supervisor.
 pub const SUPERVISED: &str = "VTT_SUPERVISED";
+/// The supervisor's process id, for the child to watch it.
+const SUPERVISOR_PID: &str = "VTT_SUPERVISOR_PID";
 
 pub struct Policy {
     /// Name used in messages ("Wortfluss", "The session").
@@ -48,11 +57,25 @@ pub struct Policy {
     pub within: Duration,
     /// How long the child may take to finish after SIGTERM before it is killed.
     pub grace: Duration,
+    /// After giving up: start over after this long instead of ending.
+    pub retry_after: Option<Duration>,
 }
 
 /// Is this process running under a supervisor?
 pub fn is_supervised() -> bool {
     std::env::var_os(SUPERVISED).is_some()
+}
+
+/// Has this process's supervisor gone (killed, crashed)? False when not supervised.
+pub fn supervisor_gone() -> bool {
+    let Some(pid) = std::env::var(SUPERVISOR_PID).ok().and_then(|p| p.parse::<u32>().ok()) else {
+        return false;
+    };
+    // Linux: an orphan gets a new parent, so this can't be fooled by a reused process id.
+    #[cfg(unix)]
+    return unsafe { libc::getppid() } as u32 != pid;
+    #[cfg(windows)]
+    return !platform::process_alive(pid);
 }
 
 #[cfg(unix)]
@@ -89,7 +112,9 @@ pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>
     let mut restarts = 0u32;
     loop {
         let mut cmd = Command::new(&exe);
-        cmd.args(child_args(restarts)).env(SUPERVISED, "1");
+        cmd.args(child_args(restarts))
+            .env(SUPERVISED, "1")
+            .env(SUPERVISOR_PID, std::process::id().to_string());
         platform::quiet_child(&mut cmd);
         let mut child: Child = cmd.spawn()?;
         let status = wait(&mut child, policy.grace)?;
@@ -113,7 +138,7 @@ pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>
         }
         eprintln!("supervisor: {} {}", policy.name, describe(status));
         if crashes.len() > policy.max_restarts {
-            let msg = crate::i18n::tf(
+            let mut msg = crate::i18n::tf(
                 "sup.gave_up",
                 &[
                     policy.name,
@@ -122,8 +147,19 @@ pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>
                     &platform::log_file().map(|p| p.display().to_string()).unwrap_or_default(),
                 ],
             );
+            let Some(pause) = policy.retry_after else {
+                let _ = crate::notification().summary("Wortfluss").body(&msg).show();
+                bail!(msg);
+            };
+            msg = format!("{msg} {}", crate::i18n::tf("sup.retry_later", &[&(pause.as_secs() / 60).to_string()]));
             let _ = crate::notification().summary("Wortfluss").body(&msg).show();
-            bail!(msg);
+            eprintln!("supervisor: {msg}");
+            if !pause_unless_stopped(pause) {
+                return Ok(Outcome::Done);
+            }
+            crashes.clear();
+            restarts += 1;
+            continue;
         }
         let backoff = Duration::from_secs((1u64 << (crashes.len() - 1).min(5)).min(30));
         eprintln!("supervisor: restarting {} in {} s", policy.name, backoff.as_secs());
@@ -143,6 +179,18 @@ pub fn supervise(policy: &Policy, mut child_args: impl FnMut(u32) -> Vec<String>
         }
         restarts += 1;
     }
+}
+
+/// Sleep for `d`; false if a stop was requested meanwhile.
+fn pause_unless_stopped(d: Duration) -> bool {
+    let until = Instant::now() + d;
+    while Instant::now() < until {
+        if platform::stop_requested() {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    true
 }
 
 /// Wait for the child; on a stop request pass it on and allow `grace` to finish.

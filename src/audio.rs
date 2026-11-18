@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub const TARGET_RATE: u32 = 16_000; // Whisper works at 16 kHz mono; smaller upload = faster
@@ -13,6 +13,8 @@ pub struct Recorder {
     stream: cpal::Stream,
     samples: Arc<Mutex<Vec<f32>>>,
     level: Level,
+    /// Set when the device went away (unplugged, disabled).
+    gone: Arc<AtomicBool>,
 }
 
 /// Loudness of the latest audio chunk (RMS, as f32 bits), for the listening indicator.
@@ -88,17 +90,31 @@ impl Recorder {
         let samples = Arc::new(Mutex::new(Vec::new()));
         let level: Level = Arc::default();
         let conv = Converter::new(config.sample_rate.0, config.channels);
+        let gone = Arc::new(AtomicBool::new(false));
+        let g = gone.clone();
+        let on_error = move |err: cpal::StreamError| {
+            eprintln!("microphone error: {err}");
+            if matches!(err, cpal::StreamError::DeviceNotAvailable) {
+                g.store(true, Ordering::SeqCst);
+            }
+        };
 
         let stream = match format {
-            SampleFormat::F32 => build::<f32>(device, &config, samples.clone(), level.clone(), conv)?,
-            SampleFormat::I16 => build::<i16>(device, &config, samples.clone(), level.clone(), conv)?,
-            SampleFormat::U16 => build::<u16>(device, &config, samples.clone(), level.clone(), conv)?,
-            SampleFormat::I32 => build::<i32>(device, &config, samples.clone(), level.clone(), conv)?,
-            SampleFormat::U8 => build::<u8>(device, &config, samples.clone(), level.clone(), conv)?,
+            SampleFormat::F32 => build::<f32>(device, &config, samples.clone(), level.clone(), conv, on_error)?,
+            SampleFormat::I16 => build::<i16>(device, &config, samples.clone(), level.clone(), conv, on_error)?,
+            SampleFormat::U16 => build::<u16>(device, &config, samples.clone(), level.clone(), conv, on_error)?,
+            SampleFormat::I32 => build::<i32>(device, &config, samples.clone(), level.clone(), conv, on_error)?,
+            SampleFormat::U8 => build::<u8>(device, &config, samples.clone(), level.clone(), conv, on_error)?,
             other => bail!("unsupported microphone sample format {other:?}"),
         };
         stream.play().context("could not start microphone")?;
-        Ok(Self { stream, samples, level })
+        Ok(Self { stream, samples, level, gone })
+    }
+
+    /// False once the device went away.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn is_alive(&self) -> bool {
+        !self.gone.load(Ordering::SeqCst)
     }
 
     /// Live loudness, updated with every audio chunk.
@@ -175,6 +191,7 @@ fn build<T>(
     buf: Arc<Mutex<Vec<f32>>>,
     level: Level,
     mut conv: Converter,
+    on_error: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<cpal::Stream>
 where
     T: SizedSample,
@@ -194,7 +211,7 @@ where
                 conv.push(&scratch, &mut b);
             }
         },
-        |err| eprintln!("microphone error: {err}"),
+        on_error,
         None,
     )?;
     Ok(stream)

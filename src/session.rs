@@ -254,6 +254,7 @@ fn run_supervised(args: &[String]) -> Result<()> {
             max_restarts: 3,
             within: Duration::from_secs(300),
             grace: Duration::from_secs(300), // time to transcribe the rest and write notes
+            retry_after: None,
         },
         |restart| {
             let mut a = vec!["session".to_string(), "worker".to_string()];
@@ -296,6 +297,9 @@ fn clock(secs: f32) -> String {
 }
 
 fn notify(msg: &str) {
+    if cfg!(test) {
+        return; // no desktop notifications from tests
+    }
     let _ = crate::notification().summary(crate::i18n::t("session.title")).body(msg).timeout(8000).show();
 }
 
@@ -305,6 +309,268 @@ struct Job {
     label: &'static str,
     /// Seconds since the session started.
     at: f32,
+}
+
+/// One recorded source of the session.
+struct Stream {
+    label: &'static str,
+    /// Sound-server source / device name, to open it again.
+    name: String,
+    /// None while the stream is broken and being reopened.
+    rec: Option<SourceRecorder>,
+    /// Seconds of the session this stream covers (audio taken plus gaps).
+    taken: f32,
+    /// The kept audio (session_keep_audio).
+    wav: Option<WavWriter>,
+    /// Broken since, and whether the user was told.
+    broken: Option<(Instant, bool)>,
+    last_try: Instant,
+}
+
+impl Stream {
+    /// Queue a recorded piece for transcription (if there is speech in it). True if
+    /// there was speech.
+    fn hand_over(&mut self, clip: audio::Clip, tx: &mpsc::Sender<Job>, show: bool) -> bool {
+        if let Some(w) = &mut self.wav {
+            w.append(&clip.samples);
+        }
+        let (secs, at) = (clip.seconds(), self.taken);
+        self.taken += secs;
+        if clip.has_speech() {
+            let _ = tx.send(Job { clip, label: self.label, at });
+            true
+        } else {
+            if show {
+                println!("  [{}] {:.0} s without speech skipped", clock(at), secs);
+            }
+            false
+        }
+    }
+
+    /// A broken stream: try to open it again every 2 s; tell the user if that takes
+    /// longer than 10 s, and again once it works.
+    fn reopen(&mut self) {
+        if self.rec.is_some() || self.last_try.elapsed() < Duration::from_secs(2) {
+            return;
+        }
+        self.last_try = Instant::now();
+        match SourceRecorder::start(&self.name) {
+            Ok(rec) => {
+                let (since, told) = self.broken.take().unwrap_or((Instant::now(), false));
+                // The gap counts, so the times of later pieces stay right.
+                self.taken += since.elapsed().as_secs_f32();
+                eprintln!("recording of {} works again after {:.0} s", self.name, since.elapsed().as_secs_f32());
+                if told {
+                    notify(crate::i18n::t("session.rec_back"));
+                }
+                self.rec = Some(rec);
+            }
+            Err(e) => {
+                if let Some((since, told)) = &mut self.broken {
+                    if !*told && since.elapsed() > Duration::from_secs(10) {
+                        *told = true;
+                        eprintln!("cannot record {} again yet: {e:#}", self.name);
+                        notify(crate::i18n::t("session.rec_lost"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Pieces that could not be transcribed yet. They are in the transcript as a marker
+/// with the path of their kept audio; while the service is unreachable new pieces are
+/// not sent but marked right away, and every 5 s, growing to 60 s, the oldest marked
+/// piece is tried. Once one works, all markers are filled in, in order.
+struct CatchUp {
+    pending: usize,
+    offline: bool,
+    next: Instant,
+    wait: Duration,
+    told: bool,
+}
+
+const FIRST_WAIT: Duration = Duration::from_secs(5);
+const LONGEST_WAIT: Duration = Duration::from_secs(60);
+
+impl CatchUp {
+    /// Markers already in the file count (a session continued after a restart).
+    fn new(path: &Path) -> Self {
+        let pending = std::fs::read_to_string(path).map(|t| pending_parts(&t).len()).unwrap_or(0);
+        CatchUp { pending, offline: false, next: Instant::now(), wait: FIRST_WAIT, told: false }
+    }
+
+    /// How long the worker may wait for the next piece.
+    fn wait(&self) -> Duration {
+        if self.pending == 0 {
+            Duration::from_secs(3600)
+        } else {
+            self.next.saturating_duration_since(Instant::now())
+        }
+    }
+
+    /// Don't send new pieces: the service is unreachable and the next try isn't due.
+    fn offline(&self) -> bool {
+        self.offline && Instant::now() < self.next
+    }
+
+    fn due(&self) -> bool {
+        self.pending > 0 && Instant::now() >= self.next
+    }
+
+    fn worked(&mut self) {
+        self.offline = false;
+        if self.pending > 0 {
+            self.next = Instant::now(); // it works again: catch up right away
+        }
+    }
+
+    fn failed(&mut self, reason: &str) {
+        self.pending += 1;
+        if !self.offline {
+            self.offline = true;
+            self.wait = FIRST_WAIT;
+            self.next = Instant::now() + self.wait;
+            if !self.told {
+                self.told = true;
+                notify(&crate::i18n::tf("session.offline", &[reason]));
+            }
+        }
+    }
+
+    /// Try the marked pieces in order, stopping at the first that still fails.
+    /// Returns the words filled in.
+    fn run(&mut self, cfg: &Config, path: &Path, show: bool) -> usize {
+        let done = fill_pending(path, cfg, show, true);
+        self.pending = done.left;
+        if done.left == 0 {
+            if self.told && done.filled > 0 {
+                notify(&crate::i18n::tf("session.back", &[&done.filled.to_string()]));
+            }
+            self.told = false;
+            self.offline = false;
+            self.wait = FIRST_WAIT;
+        } else {
+            self.offline = done.filled == 0;
+            self.wait = if done.filled > 0 { FIRST_WAIT } else { (self.wait * 2).min(LONGEST_WAIT) };
+            self.next = Instant::now() + self.wait;
+        }
+        done.words
+    }
+}
+
+/// Marks a piece whose audio is kept for a later try (`vtt retry`, or the session
+/// itself once the service works again). The older form is understood too.
+const KEPT: &str = "audio kept for `vtt retry`: ";
+const KEPT_OLD: &str = "Audio saved for `vtt retry`: ";
+
+/// A marked piece in a transcript.
+struct Part {
+    /// The whole line, without its line break.
+    line: String,
+    /// "**[12:30] You:** ", what stays in front of the text.
+    head: String,
+    wav: PathBuf,
+}
+
+fn pending_parts(text: &str) -> Vec<Part> {
+    let mut parts = Vec::new();
+    for line in text.lines() {
+        for tag in [KEPT, KEPT_OLD] {
+            let Some(i) = line.find(tag) else { continue };
+            let rest = &line[i + tag.len()..];
+            let (Some(end), Some(start)) = (rest.rfind("]_"), line[..i].rfind("_[")) else { continue };
+            parts.push(Part { line: line.to_string(), head: line[..start].to_string(), wav: PathBuf::from(&rest[..end]) });
+            break;
+        }
+    }
+    parts
+}
+
+struct Filled {
+    filled: usize,
+    left: usize,
+    words: usize,
+}
+
+/// Transcribe the marked pieces of a transcript from their kept audio and put the text
+/// in their place. `stop_at_failure`: stop at the first that still fails (no
+/// connection: the rest would fail too).
+fn fill_pending(path: &Path, cfg: &Config, show: bool, stop_at_failure: bool) -> Filled {
+    let mut done = Filled { filled: 0, left: 0, words: 0 };
+    let Ok(mut text) = std::fs::read_to_string(path) else { return done };
+    let parts = pending_parts(&text);
+    let a = cfg.active();
+    let phrases = cfg.phrases();
+    for (i, p) in parts.iter().enumerate() {
+        let Ok(wav) = std::fs::read(&p.wav) else {
+            done.left += 1; // the audio is gone; the marker stays
+            continue;
+        };
+        match stt::transcribe(&a, &cfg.language, &phrases.join(", "), &wav) {
+            Ok(t) => {
+                let secs = wav.len().saturating_sub(44) as f32 / (audio::TARGET_RATE as f32 * 2.0);
+                let _ = usage::record(a.provider.id, &a.model, secs, t.cost);
+                if t.text.is_empty() || crate::is_hallucination(&t.text) {
+                    text = text.replacen(&format!("{}\n\n", p.line), "", 1);
+                } else {
+                    let new = corrected(cfg, &a, t.text, &phrases);
+                    done.words += new.split_whitespace().count();
+                    if show {
+                        println!("{}{new}  (filled in)\n", p.head);
+                    }
+                    text = text.replacen(&p.line, &format!("{}{new}", p.head), 1);
+                }
+                let _ = std::fs::remove_file(&p.wav);
+                done.filled += 1;
+            }
+            Err(e) => {
+                eprintln!("{} still not transcribed: {e:#}", p.wav.display());
+                done.left += 1;
+                if stop_at_failure {
+                    done.left += parts.len() - i - 1;
+                    break;
+                }
+            }
+        }
+    }
+    if done.filled > 0 {
+        // Written next to it and renamed: a crash can't leave half a transcript.
+        let tmp = path.with_extension("md.part");
+        let saved = platform::write_private(&tmp, &text).and_then(|_| Ok(std::fs::rename(&tmp, path)?));
+        if let Err(e) = saved {
+            eprintln!("could not update {}: {e:#}", path.display());
+        }
+    }
+    done
+}
+
+/// `vtt retry FILE`: fill in the parts of a transcript that could not be transcribed.
+pub fn retry_file(path: &Path) -> Result<()> {
+    let cfg = config::load()?;
+    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let n = pending_parts(&text).len();
+    if n == 0 {
+        println!("{}: nothing to fill in.", path.display());
+        return Ok(());
+    }
+    println!("{}: {n} part(s) to fill in ...", path.display());
+    let done = fill_pending(path, &cfg, true, false);
+    println!("{} filled in, {} still missing.", done.filled, done.left);
+    Ok(())
+}
+
+/// Transcripts in the session folder with parts still to fill in.
+pub fn transcripts_with_gaps() -> Vec<PathBuf> {
+    let Ok(dir) = config::load().and_then(|c| session_dir(&c)) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut found: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "md"))
+        .filter(|p| std::fs::read_to_string(p).is_ok_and(|t| !pending_parts(&t).is_empty()))
+        .collect();
+    found.sort();
+    found
 }
 
 /// Run a session in this process until Ctrl+C / `vtt session stop`.
@@ -416,10 +682,12 @@ pub fn run(args: &[String]) -> Result<()> {
         } else {
             None
         };
-        streams.push((label, rec, opts.offset, wav)); // (label, recorder, seconds taken, kept audio)
+        streams.push(Stream { label, name, rec: Some(rec), taken: opts.offset, wav, broken: None, last_try: Instant::now() });
     }
 
-    // One worker transcribes pieces in order and appends them to the file.
+    // One worker transcribes pieces in order and appends them to the file. Pieces that
+    // can't be transcribed (no internet, service down) get a marker and their audio is
+    // kept; they are filled in as soon as it works again (see CatchUp).
     let (tx, rx) = mpsc::channel::<Job>();
     let worker = {
         let (cfg, path) = (cfg.clone(), path.clone());
@@ -429,11 +697,30 @@ pub fn run(args: &[String]) -> Result<()> {
         thread::spawn(move || {
             let mut trackers = Trackers::new(speakers, first);
             let mut words = 0usize;
-            for job in rx {
-                let tracker = trackers.get(job.label);
-                words += transcribe_piece(job, &cfg, &path, show, tracker);
+            let mut catch_up = CatchUp::new(&path);
+            loop {
+                match rx.recv_timeout(catch_up.wait()) {
+                    Ok(job) => {
+                        let tracker = trackers.get(job.label);
+                        match transcribe_piece(job, &cfg, &path, show, tracker, catch_up.offline()) {
+                            Ok(w) => {
+                                words += w;
+                                catch_up.worked();
+                            }
+                            Err(reason) => catch_up.failed(&reason),
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+                if catch_up.due() {
+                    words += catch_up.run(&cfg, &path, show);
+                }
             }
-            words
+            if catch_up.pending > 0 {
+                words += catch_up.run(&cfg, &path, show); // a last try before the notes
+            }
+            (words, catch_up.pending)
         })
     };
 
@@ -441,28 +728,39 @@ pub fn run(args: &[String]) -> Result<()> {
     let started = Instant::now();
     let mut last_speech = Instant::now();
     let mut stopped_quietly = false;
+    // Taken over from a supervisor that is gone, so `vtt session stop` still finds us.
+    let mut own_lock = None;
     while !platform::stop_requested() {
         thread::sleep(Duration::from_millis(500));
-        for (label, rec, taken, wav) in streams.iter_mut() {
-            while let Some(clip) = rec.take_piece(min, max) {
-                if let Some(w) = wav {
-                    w.append(&clip.samples);
+        for s in streams.iter_mut() {
+            if let Some(rec) = &s.rec {
+                let mut clips = Vec::new();
+                while let Some(clip) = rec.take_piece(min, max) {
+                    clips.push(clip);
                 }
-                let secs = clip.seconds();
-                let at = *taken;
-                *taken += secs;
-                if clip.has_speech() {
-                    last_speech = Instant::now();
-                    let _ = tx.send(Job { clip, label, at });
-                } else if show {
-                    println!("  [{}] {:.0} s without speech skipped", clock(at), secs);
+                if !rec.is_alive() {
+                    // The sound server ended the stream (restarted, device removed): keep
+                    // what it recorded and open it again.
+                    eprintln!("recording of {} ended; reopening it", s.name);
+                    clips.push(s.rec.take().unwrap().stop());
+                    s.broken = Some((Instant::now(), false));
+                }
+                for clip in clips {
+                    if s.hand_over(clip, &tx, show) {
+                        last_speech = Instant::now();
+                    }
                 }
             }
+            s.reopen();
         }
         // Forgotten session: no speech on any stream for a long time.
         if last_speech.elapsed().as_secs_f32() > QUIET_STOP {
             stopped_quietly = true;
             break;
+        }
+        if own_lock.is_none() && crate::supervisor::supervisor_gone() {
+            eprintln!("the session supervisor is gone; this session continues on its own");
+            own_lock = platform::lock_named(LOCK).ok().flatten();
         }
     }
 
@@ -470,24 +768,28 @@ pub fn run(args: &[String]) -> Result<()> {
     if show {
         println!("\nStopping: transcribing the last piece...");
     }
-    for (label, rec, taken, wav) in streams {
-        let clip = rec.stop();
-        if let Some(mut w) = wav {
-            w.append(&clip.samples);
+    for mut s in streams {
+        if let Some(rec) = s.rec.take() {
+            let clip = rec.stop();
+            if clip.seconds() >= 0.4 {
+                s.hand_over(clip, &tx, show);
+            }
+        }
+        if let Some(w) = s.wav.take() {
             if let Err(e) = w.finish() {
                 eprintln!("could not save the session audio: {e:#}");
             }
         }
-        if clip.seconds() >= 0.4 && clip.has_speech() {
-            let _ = tx.send(Job { clip, label, at: taken });
-        }
     }
     drop(tx);
-    let words = worker.join().unwrap_or(0);
+    let (words, left_over) = worker.join().unwrap_or((0, 0));
     let minutes = started.elapsed().as_secs_f32() / 60.0;
 
     // Notes.
     let mut summary = format!("{minutes:.0} min, {words} words");
+    if left_over > 0 {
+        summary.push_str(&format!(", {left_over} part(s) not transcribed yet: `vtt retry FILE`"));
+    }
     if let Some(kind) = opts.notes {
         if words >= 10 {
             if show {
@@ -709,7 +1011,7 @@ fn redo(args: &[String]) -> Result<()> {
     let mut trackers = Trackers::new(speakers_on, 0);
     for job in jobs {
         let tracker = trackers.get(job.label);
-        words += transcribe_piece(job, &cfg, &path, true, tracker);
+        words += transcribe_piece(job, &cfg, &path, true, tracker, false).unwrap_or(0);
     }
     if let Some(kind) = notes_kind {
         if words >= 10 {
@@ -835,8 +1137,17 @@ fn corrected(cfg: &Config, a: &config::Active, text: String, phrases: &[String])
     text
 }
 
-/// Transcribe one piece and append it to the transcript. Returns the number of words.
-fn transcribe_piece(job: Job, cfg: &Config, path: &Path, show: bool, tracker: Option<&mut Tracker>) -> usize {
+/// Transcribe one piece and append it to the transcript. Returns the number of words,
+/// or why it failed (then a marker is appended and the audio kept, see CatchUp).
+/// `offline`: the service is unreachable right now, so the piece is only marked.
+fn transcribe_piece(
+    job: Job,
+    cfg: &Config,
+    path: &Path,
+    show: bool,
+    tracker: Option<&mut Tracker>,
+    offline: bool,
+) -> Result<usize, String> {
     let Job { mut clip, label, at } = job;
     clip.trim_silence();
     clip.shorten_pauses();
@@ -847,7 +1158,8 @@ fn transcribe_piece(job: Job, cfg: &Config, path: &Path, show: bool, tracker: Op
     // With speaker separation; if that fails, the piece is transcribed without, so no
     // text is lost.
     let mut separated = false;
-    if let Some(tracker) = tracker {
+    let mut failure = None;
+    if let Some(tracker) = tracker.filter(|_| !offline) {
         match tracker.transcribe(&a, &a.speaker_model, &cfg.language, &clip) {
             Ok((turns, cost)) => {
                 let _ = usage::record(a.provider.id, &a.speaker_model, clip.seconds(), cost);
@@ -865,20 +1177,28 @@ fn transcribe_piece(job: Job, cfg: &Config, path: &Path, show: bool, tracker: Op
     }
     if !separated {
         let wav = clip.to_wav();
-        let line = match stt::transcribe(&a, &cfg.language, &phrases.join(", "), &wav) {
+        let result = if offline {
+            Err("waiting for the connection".to_string())
+        } else {
+            stt::transcribe(&a, &cfg.language, &phrases.join(", "), &wav).map_err(|e| format!("{e:#}"))
+        };
+        let line = match result {
             Ok(t) => {
                 let _ = usage::record(a.provider.id, &a.model, clip.seconds(), t.cost);
                 if t.text.is_empty() || crate::is_hallucination(&t.text) {
-                    return 0;
+                    return Ok(0);
                 }
                 corrected(cfg, &a, t.text, &phrases)
             }
             Err(e) => {
-                let saved = crate::save_failed(&wav, (at as u32).max(1))
-                    .map(|p| format!(" Audio saved for `vtt retry`: {}", p.display()))
+                // One short line: the reason must not break the marker.
+                let reason: String = e.replace(['\n', '\r'], " ").replace("]_", "]").replace("_[", "[").chars().take(160).collect();
+                eprintln!("piece at {} not transcribed: {reason}", clock(at));
+                let kept = crate::save_failed(&wav, (at as u32).max(1))
+                    .map(|p| format!("; {KEPT}{}", p.display()))
                     .unwrap_or_default();
-                eprintln!("piece at {} failed: {e:#}", clock(at));
-                format!("_[this part could not be transcribed: {e}.{saved}]_")
+                failure = Some(reason.clone());
+                format!("_[not transcribed yet ({reason}){kept}]_")
             }
         };
         entries.push((at, label.to_string(), line));
@@ -901,7 +1221,10 @@ fn transcribe_piece(job: Job, cfg: &Config, path: &Path, show: bool, tracker: Op
     if let Err(e) = appended {
         eprintln!("could not write to {}: {e}", path.display());
     }
-    words
+    match failure {
+        Some(reason) => Err(reason),
+        None => Ok(words),
+    }
 }
 
 fn capitalize(s: &str) -> String {
@@ -912,6 +1235,7 @@ fn capitalize(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn options() {
@@ -945,6 +1269,112 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].1, "Others");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn markers_are_found() {
+        let text = "# T\n\n**[00:00:10] You:** hello\n\n\
+            **[00:00:40] Others:** _[not transcribed yet (no route to host); audio kept for `vtt retry`: /tmp/a b/1-040.wav]_\n\n\
+            **[00:01:10]** _[this part could not be transcribed: HTTP 500. Audio saved for `vtt retry`: /tmp/2-070.wav]_\n\n\
+            **[00:01:40]** _[this part could not be transcribed: HTTP 500.]_\n\n";
+        let parts = pending_parts(text);
+        assert_eq!(parts.len(), 2, "the last one has no audio");
+        assert_eq!(parts[0].head, "**[00:00:40] Others:** ");
+        assert_eq!(parts[0].wav, PathBuf::from("/tmp/a b/1-040.wav"));
+        assert_eq!(parts[1].head, "**[00:01:10]** ");
+        assert_eq!(parts[1].wav, PathBuf::from("/tmp/2-070.wav"));
+    }
+
+    /// A transcription server on localhost that can be switched off (the connection is
+    /// dropped, like no internet) and on (answers with `text`).
+    fn fake_server(up: Arc<std::sync::atomic::AtomicBool>, text: &'static str) -> String {
+        use std::io::{BufRead, BufReader, Read};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut conn) = conn else { continue };
+                if !up.load(std::sync::atomic::Ordering::SeqCst) {
+                    continue; // dropped: connection reset
+                }
+                let mut reader = BufReader::new(conn.try_clone().unwrap());
+                let mut length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(v) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0; length];
+                let _ = reader.read_exact(&mut body);
+                let json = format!("{{\"text\":\"{text}\"}}");
+                let _ = write!(
+                    conn,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json}",
+                    json.len()
+                );
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    /// No internet: the piece is marked and its audio kept; once the service answers
+    /// again the marker is replaced by the text, in place, and the audio deleted.
+    #[test]
+    fn gaps_are_filled_once_the_service_is_back() {
+        let dir = std::env::temp_dir().join(format!("vtt-gaps-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Kept audio and usage go to the state folder: not the user's.
+        std::env::set_var("XDG_STATE_HOME", dir.join("state"));
+        std::env::set_var("XDG_DATA_HOME", dir.join("data"));
+        let up = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut cfg = Config::default();
+        cfg.provider = "custom".into();
+        cfg.custom.api_url = fake_server(up.clone(), "back online");
+        cfg.custom.model = "whisper".into();
+        let path = dir.join("t.md");
+        std::fs::write(&path, "# T\n\n**[00:00:00]** before\n\n").unwrap();
+        let speech = || audio::Clip {
+            samples: (0..48_000).map(|i| ((i as f32) * 0.06).sin() * if (i / 4000) % 2 == 0 { 0.5 } else { 0.05 }).collect(),
+        };
+
+        let failed = transcribe_piece(Job { clip: speech(), label: "", at: 30.0 }, &cfg, &path, false, None, false);
+        assert!(failed.is_err());
+        let after_marked = transcribe_piece(Job { clip: speech(), label: "", at: 60.0 }, &cfg, &path, false, None, true);
+        assert_eq!(after_marked, Err("waiting for the connection".to_string()), "offline: not even sent");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let parts = pending_parts(&text);
+        assert_eq!(parts.len(), 2, "{text}");
+        assert!(parts.iter().all(|p| p.wav.exists()));
+
+        // Still down: nothing changes, and it stops at the first failure.
+        let done = fill_pending(&path, &cfg, false, true);
+        assert_eq!((done.filled, done.left), (0, 2));
+
+        up.store(true, std::sync::atomic::Ordering::SeqCst);
+        let done = fill_pending(&path, &cfg, false, true);
+        assert_eq!((done.filled, done.left, done.words), (2, 0, 4));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text,
+            "# T\n\n**[00:00:00]** before\n\n**[00:00:30]** back online\n\n**[00:01:00]** back online\n\n"
+        );
+        assert!(parts.iter().all(|p| !p.wav.exists()), "kept audio deleted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn catch_up_waits_longer_while_offline() {
+        let mut c = CatchUp { pending: 0, offline: false, next: Instant::now(), wait: FIRST_WAIT, told: true };
+        assert!(c.wait() > Duration::from_secs(60), "nothing pending: no hurry");
+        c.failed("no route to host");
+        assert!(c.offline() && !c.due() && c.pending == 1);
+        assert!(c.wait() <= FIRST_WAIT);
+        c.worked(); // a new piece went through: catch up now
+        assert!(!c.offline() && c.due());
     }
 
     #[test]

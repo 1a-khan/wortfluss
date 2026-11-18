@@ -81,6 +81,12 @@ pub fn catch_stop_signals() {
     }
 }
 
+/// Is process `pid` still running?
+pub fn process_alive(pid: u32) -> bool {
+    let r = unsafe { libc::kill(pid as i32, 0) };
+    r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
 pub fn stop_requested() -> bool {
     STOP_REQUESTED.load(std::sync::atomic::Ordering::SeqCst)
 }

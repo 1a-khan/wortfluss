@@ -39,7 +39,8 @@ COMMANDS
     vtt start        start in the background        vtt stop    stop it
     vtt              run in this terminal and show what is typed (good for testing)
     vtt usage        audio sent today / this month / all time, with cost
-    vtt retry        transcribe pieces that failed earlier (e.g. no internet)
+    vtt retry [FILE] transcribe pieces that failed earlier (e.g. no internet); fills
+                     the gaps in session transcripts (FILE, or all in the session folder)
     vtt update       install a new version now (automatic every 6 h; auto_update = false: off)
     vtt mics         list the microphones; choose one with `vtt set mic`
     vtt session start [title] [--source system|mic|both]   transcribe a lecture/meeting
@@ -143,7 +144,8 @@ SILENCE: pieces without speech (pauses, breathing, fan or street noise, keyboard
 clicks) are never sent, and pauses longer than 1 s inside a piece are shortened, so
 you don't pay for silence. Toggle mode stops by itself after 60 s without speech.
 
-If the internet drops, unsent pieces are saved; `vtt retry` transcribes them later.
+If the internet drops, unsent pieces are saved; `vtt retry` transcribes them later. In a
+session they are filled in automatically once the connection is back.
 
 Beeps: high beep = recording, low beep = sent (`vtt set sounds`).
 While listening, a small sound wave appears next to the text cursor; grey dots = turning

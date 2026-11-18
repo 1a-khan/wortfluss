@@ -44,6 +44,8 @@ pub enum Event {
     Shortcut(Action),
     /// A new version is downloaded and checked; install it when idle.
     UpdateReady,
+    /// The supervisor of this worker is gone; hand over to a fresh one when idle.
+    Orphaned,
 }
 
 /// Something to do, triggered by a keyboard shortcut or the tray menu.

@@ -111,6 +111,12 @@ impl SourceRecorder {
     pub fn stop(self) -> crate::audio::Clip {
         self.rec.stop()
     }
+
+    /// Is the stream still delivering? False once the device is gone (unplugged,
+    /// disabled).
+    pub fn is_alive(&self) -> bool {
+        self.rec.is_alive()
+    }
 }
 
 /// Is the current output headphones or a headset? None if the name doesn't tell.

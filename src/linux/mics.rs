@@ -14,6 +14,7 @@ use pulseaudio::protocol;
 use std::ffi::CString;
 use std::io::BufReader;
 use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -183,6 +184,16 @@ pub struct SourceRecorder {
     samples: Arc<Mutex<Vec<f32>>>,
     socket: UnixStream,
     thread: Option<std::thread::JoinHandle<()>>,
+    ended: Arc<AtomicBool>,
+}
+
+/// Sets the flag when dropped: the reading thread ended, however it ended.
+struct Ended(Arc<AtomicBool>);
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
 }
 
 impl SourceRecorder {
@@ -212,17 +223,22 @@ impl SourceRecorder {
         let socket = sock.get_ref().try_clone()?;
         let samples = Arc::new(Mutex::new(Vec::new()));
         let buf = samples.clone();
+        let ended = Arc::new(AtomicBool::new(false));
+        let flag = Ended(ended.clone());
         let thread = std::thread::spawn(move || {
             use std::io::Read;
+            let _flag = flag;
             let mut data = Vec::new();
             loop {
                 let Ok(desc) = protocol::read_descriptor(&mut sock) else { return };
                 if desc.channel == u32::MAX {
-                    // a message from the server (e.g. stream moved): read and ignore
-                    if protocol::Command::read_tag_prefixed(&mut sock, version).is_err() {
-                        return;
+                    // A message from the server. Moved or suspended: data comes again.
+                    // Killed (the source is gone, e.g. a device removed): this stream
+                    // is over, the session opens a new one.
+                    match protocol::Command::read_tag_prefixed(&mut sock, version) {
+                        Ok((_, protocol::Command::RecordStreamKilled(_))) | Err(_) => return,
+                        Ok(_) => continue,
                     }
-                    continue;
                 }
                 data.resize(desc.length as usize, 0);
                 if sock.read_exact(&mut data).is_err() {
@@ -235,7 +251,13 @@ impl SourceRecorder {
                 );
             }
         });
-        Ok(Self { samples, socket, thread: Some(thread) })
+        Ok(Self { samples, socket, thread: Some(thread), ended })
+    }
+
+    /// Is the stream still delivering? False once the sound server ended it (restart,
+    /// source removed) or the connection broke.
+    pub fn is_alive(&self) -> bool {
+        !self.ended.load(Ordering::SeqCst)
     }
 
     /// See `audio::Recorder::take_piece`.

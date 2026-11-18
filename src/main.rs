@@ -57,7 +57,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 
 fn main() {
@@ -79,7 +79,7 @@ fn main() {
 fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        None | Some("run") => daemon(),
+        None | Some("run") => daemon(&args[1..]),
         Some("worker") => worker(),
         Some("setup" | "init" | "config" | "settings") => setup::run(false),
         Some("set" | "change") => setup::set(args.get(1).map(String::as_str)),
@@ -95,7 +95,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("usage") => usage::report(),
-        Some("retry") => retry(),
+        Some("retry") => retry(args.get(1)),
         Some("session" | "sessions") => session::cmd(&args[1..]),
         Some("notes") => notes::cmd(&args[1..]),
         Some("speakers" | "speaker" | "names") => speakers::cmd(&args[1..]),
@@ -170,7 +170,15 @@ fn start() -> Result<()> {
     setup::start_and_confirm(&cfg)
 }
 
-fn daemon() -> Result<()> {
+fn daemon(args: &[String]) -> Result<()> {
+    // `--after PID`: started by an orphaned worker (its supervisor is gone) that exits
+    // right after; wait for it so the two never run at the same time.
+    if let Some(pid) = args.iter().position(|a| a == "--after").and_then(|i| args.get(i + 1)?.parse::<u32>().ok()) {
+        let until = Instant::now() + Duration::from_secs(15);
+        while platform::process_alive(pid) && Instant::now() < until {
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
     let Some(_lock) = platform::lock_instance()? else {
         let pid = platform::running_pid()
             .map(|p| format!(" (process {p})"))
@@ -206,6 +214,8 @@ fn daemon() -> Result<()> {
             max_restarts: 5,
             within: Duration::from_secs(60),
             grace: Duration::from_secs(5),
+            // Dictation should come back by itself: the cause may pass.
+            retry_after: Some(Duration::from_secs(300)),
         },
         |_| vec!["worker".to_string()],
     )?;
@@ -382,6 +392,17 @@ fn worker() -> Result<()> {
     }
     let rewriting = Arc::new(AtomicBool::new(false));
     watch_config(tx.clone(), reload_pending.clone());
+    // The supervisor gone (killed, crashed): hand over to a fresh one (see supervisor.rs).
+    if supervisor::is_supervised() {
+        let tx = tx.clone();
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(2));
+            if supervisor::supervisor_gone() {
+                let _ = tx.send(hotkey::Event::Orphaned);
+                return;
+            }
+        });
+    }
     let indicator = indicator::Indicator::start(cfg.indicator, busy.clone());
     // Just updated: say so (the old version left a note).
     if let Ok(path) = platform::state_dir().map(|d| d.join(UPDATED_MARKER)) {
@@ -608,6 +629,20 @@ fn worker() -> Result<()> {
                             return Err(platform::restart_self());
                         }
                         Err(e) => report(&i18n::tf("upd.failed", &[&format!("{e:#}")])),
+                    }
+                }
+            }
+            (_, Orphaned) if !platform::stop_requested() => {
+                let idle = rec.recorder.is_none() && busy.load(SeqCst) == 0 && !rewriting.load(SeqCst);
+                if !idle {
+                    after(Duration::from_secs(2), Orphaned);
+                } else {
+                    eprintln!("the supervisor is gone; starting a fresh Wortfluss");
+                    let me = std::process::id().to_string();
+                    match platform::start_background_with(&["run", "--after", &me]) {
+                        Ok(()) => std::process::exit(0),
+                        // Keep working unsupervised rather than not at all.
+                        Err(e) => eprintln!("could not start it ({e:#}); carrying on unsupervised"),
                     }
                 }
             }
@@ -901,8 +936,17 @@ pub(crate) fn save_failed(wav: &[u8], piece: u32) -> Result<std::path::PathBuf> 
     Ok(path)
 }
 
-/// `vtt retry`: transcribe audio that failed earlier (e.g. no internet) and print it.
-fn retry() -> Result<()> {
+/// `vtt retry [FILE]`: transcribe audio that failed earlier (e.g. no internet). Session
+/// transcripts get the text in place of their markers (FILE, or all in the session
+/// folder); other recordings (dictation) are printed.
+fn retry(file: Option<&String>) -> Result<()> {
+    if let Some(f) = file {
+        return session::retry_file(std::path::Path::new(f));
+    }
+    for transcript in session::transcripts_with_gaps() {
+        session::retry_file(&transcript)?;
+        println!();
+    }
     let dir = failed_dir()?;
     let mut files: Vec<_> = std::fs::read_dir(&dir)
         .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect())
