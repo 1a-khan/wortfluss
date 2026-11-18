@@ -25,6 +25,9 @@ REWRITE SELECTED TEXT (like the writing assistant on phones)
     #social, Emojis hinzufügen. Edit the suggestion if you like, then Enter (Ersetzen) puts
     it over the selection; Copy puts it on the clipboard, Esc cancels. Uses the text model of
     `vtt set correction` (about $0.0001 per suggestion). Labels are German on German systems.
+    Translate into: turns the suggestion shown into another language (German, English,
+    Turkish, Spanish ...) by meaning and in the same tone, not word by word; then every
+    tone (1-6) comes out in that language until you go back to the original language.
 
 COMMANDS
     vtt setup        menu of all settings with current values; change one at a time

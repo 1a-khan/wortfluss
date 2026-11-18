@@ -526,6 +526,11 @@ const TEXTS: &[Row] = &[
         "Aplikacja z zaznaczeniem nie jest już na pierwszym planie. Nowy tekst jest w schowku: wklej go Ctrl+V.",
         "L'app con la selezione non è più in primo piano. Il nuovo testo è negli appunti: incollalo con Ctrl+V.",
     ]),
+    ("rw.translate_to", ["Translate into", "Übersetzen in", "Şu dile çevir:", "Traducir al", "Przetłumacz na", "Traduci in"]),
+    ("rw.translate", ["Translate", "Übersetzen", "Çevir", "Traducir", "Przetłumacz", "Traduci"]),
+    ("rw.translation", ["Translation", "Übersetzung", "Çeviri", "Traducción", "Tłumaczenie", "Traduzione"]),
+    ("rw.own_language", ["Original language", "Originalsprache", "Orijinal dil", "Idioma original", "Język oryginału", "Lingua originale"]),
+    ("rw.translating", ["Translating …", "Wird übersetzt …", "Çevriliyor…", "Traduciendo…", "Tłumaczę…", "Traduzione in corso…"]),
     ("rw.cancel", ["Cancel", "Abbrechen", "İptal", "Cancelar", "Anuluj", "Annulla"]),
     ("rw.nothing", [
         "No text selected. Select text in an app and press the shortcut again.",

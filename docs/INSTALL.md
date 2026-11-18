@@ -104,7 +104,7 @@ and there is no bubble.
 |---|---|
 | **Dictate** | Click into any text field, **hold Right Ctrl**, speak, let go. The text appears after about a second. |
 | Know it is listening | A short beep, and a small bubble with a moving sound wave next to the text cursor (in apps that don't report their cursor: at the bottom of the screen). Grey dots: the text is on its way. |
-| **Improve selected text** | Select text, press **Ctrl+Alt+R**, choose a tone with 1–6 (correct, professional, casual, polite, social, emojis), **Enter** replaces it. |
+| **Improve selected text** | Select text, press **Ctrl+Alt+R**, choose a tone with 1–6 (correct, professional, casual, polite, social, emojis), **Enter** replaces it. To get it in another language, pick one under *Translate into* and press *Translate*. |
 | **Transcribe a lecture, video or meeting** | **Ctrl+Alt+S** starts and stops; the transcript and notes land in *Documents/vtt* (tray → *Open transcripts folder*). Only record people with their consent. |
 | Change settings | Tray icon → *All settings...* (or **Ctrl+Alt+V**), Start menu → *Wortfluss settings*, or `vtt setup`. |
 | Check that everything works | `vtt check` (Windows: in a command window) |

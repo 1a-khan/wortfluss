@@ -170,6 +170,16 @@ text already suggested. Pick a tone with the mouse or the keys 1–6:
 | 5 | #social | short social media post with hashtags |
 | 6 | Emojis hinzufügen / Add emojis | same text with fitting emojis |
 
+**Translate:** pick a language under *Übersetzen in / Translate into* (German, English, Turkish,
+Spanish, French and 17 more) and press *Übersetzen*. It translates the suggestion you are
+looking at (e.g. the Professional version, with your edits) by meaning, like a human translator,
+not word by word. The tone stays: Professional becomes business Turkish with its usual greeting
+and closing, Casual uses the informal address (sen), #social gets Turkish hashtags, and so on.
+While a language is chosen, every tone (1–6) comes out in it; a new language in the list
+switches right away, *Originalsprache / Original language* goes back. Enter replaces the
+selection with the translation. The language is remembered for next time. Languages in other scripts
+(Arabic, Urdu, Hindi, Chinese ...) are not offered yet: the window can't display them.
+
 The suggestion can be edited. **Enter** (*Ersetzen*) puts it over the selection like dictated
 text (pasted, or typed when pasting is off; typed line breaks are Shift+Enter, so chat apps
 don't send early). On Windows it waits until the app with the selection is in front again;

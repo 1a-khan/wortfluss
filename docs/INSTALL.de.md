@@ -109,7 +109,7 @@ statt eingefügt, und es gibt keine Blase.
 |---|---|
 | **Diktieren** | In ein Textfeld klicken, **rechte Strg-Taste halten**, sprechen, loslassen. Der Text erscheint nach etwa einer Sekunde. |
 | Sehen, dass es zuhört | Ein kurzer Piepton und eine kleine Blase mit bewegter Schallwelle neben dem Text-Cursor (in Apps, die ihren Cursor nicht melden: unten am Bildschirm). Graue Punkte: Der Text ist unterwegs. |
-| **Markierten Text verbessern** | Text markieren, **Strg+Alt+R**, Ton mit 1–6 wählen (korrigieren, professionell, zwanglos, höflich, Social Media, Emojis), **Enter** ersetzt ihn. |
+| **Markierten Text verbessern** | Text markieren, **Strg+Alt+R**, Ton mit 1–6 wählen (korrigieren, professionell, zwanglos, höflich, Social Media, Emojis), **Enter** ersetzt ihn. In einer anderen Sprache: unter *Übersetzen in* die Sprache wählen und *Übersetzen* drücken. |
 | **Vorlesung, Video oder Besprechung mitschreiben** | **Strg+Alt+S** startet und stoppt; Transkript und Notizen landen in *Dokumente/vtt* (Symbol → *Ordner mit Transkripten öffnen*). Andere Personen nur mit deren Einverständnis aufnehmen. |
 | Einstellungen ändern | Symbol → *Alle Einstellungen …* (oder **Strg+Alt+V**), Startmenü → *Wortfluss settings*, oder `vtt setup`. |
 | Prüfen, ob alles funktioniert | `vtt check` (Windows: in der Eingabeaufforderung) |
