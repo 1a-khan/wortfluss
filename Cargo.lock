@@ -4729,7 +4729,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "smithay-clipboard",
- "toml 0.8.2",
+ "toml 1.2.1+spec-1.1.0",
  "tray-icon",
  "ureq",
  "windows-sys 0.61.2",
