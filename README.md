@@ -162,6 +162,8 @@ Like the writing assistant on Samsung/Galaxy phones, in every app: select text, 
 **Ctrl+Alt+R** (or tray → *Rewrite selected text...*). A small window opens with the corrected
 text already suggested. Pick a tone with the mouse or the keys 1–6:
 
+![The rewrite window: tones on top, the selected text, and the corrected suggestion](docs/images/rewrite.png)
+
 | Key | Tone (German / English system) | What it does |
 |---|---|---|
 | 1 | Korrigieren / Correct | fixes spelling, grammar, punctuation; wording stays |

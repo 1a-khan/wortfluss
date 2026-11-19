@@ -116,6 +116,18 @@ fn item(label: impl Into<String>, action: Action) -> MenuItem<VttTray> {
     .into()
 }
 
+/// An entry with a symbolic icon from the desktop's icon theme (monochrome, follows
+/// light/dark: the same icons GNOME's own menus use).
+fn item_icon(icon: &str, label: impl Into<String>, action: Action) -> MenuItem<VttTray> {
+    StandardItem {
+        label: label.into(),
+        icon_name: icon.into(),
+        activate: Box::new(move |t: &mut VttTray| t.send(action.clone())),
+        ..Default::default()
+    }
+    .into()
+}
+
 fn check(label: impl Into<String>, checked: bool, action: Action) -> MenuItem<VttTray> {
     CheckmarkItem {
         label: label.into(),
@@ -154,21 +166,24 @@ impl ksni::Tray for VttTray {
         ];
         // Rebuilt after every dictation (the icon changes), so it stays current.
         if let Some(saved) = crate::usage::tray_line(self.typing_wpm) {
-            menu.push(StandardItem { label: saved, enabled: false, ..Default::default() }.into());
+            menu.push(
+                StandardItem { label: saved, icon_name: "document-open-recent-symbolic".into(), enabled: false, ..Default::default() }
+                    .into(),
+            );
         }
         menu.push(MenuItem::Separator);
 
         // Sessions
         if self.session {
-            menu.push(item(crate::i18n::t("tray.stop_session"), Action::StopSession));
+            menu.push(item_icon("media-playback-stop-symbolic", crate::i18n::t("tray.stop_session"), Action::StopSession));
         } else {
-            menu.push(item(with_key(crate::i18n::t("tray.session_system"), &self.shortcut_session), Action::StartSession("system".into())));
-            menu.push(item(crate::i18n::t("tray.session_mic"), Action::StartSession("mic".into())));
-            menu.push(item(with_key(crate::i18n::t("tray.session_call"), &self.shortcut_call), Action::StartSession("both".into())));
+            menu.push(item_icon("audio-speakers-symbolic", with_key(crate::i18n::t("tray.session_system"), &self.shortcut_session), Action::StartSession("system".into())));
+            menu.push(item_icon("audio-input-microphone-symbolic", crate::i18n::t("tray.session_mic"), Action::StartSession("mic".into())));
+            menu.push(item_icon("call-start-symbolic", with_key(crate::i18n::t("tray.session_call"), &self.shortcut_call), Action::StartSession("both".into())));
         }
-        menu.push(item(crate::i18n::t("tray.open"), Action::OpenTranscripts));
+        menu.push(item_icon("folder-open-symbolic", crate::i18n::t("tray.open"), Action::OpenTranscripts));
         menu.push(MenuItem::Separator);
-        menu.push(item(with_key(crate::i18n::t("tray.rewrite"), &self.shortcut_rewrite), Action::Rewrite));
+        menu.push(item_icon("document-edit-symbolic", with_key(crate::i18n::t("tray.rewrite"), &self.shortcut_rewrite), Action::Rewrite));
         menu.push(MenuItem::Separator);
 
         // Quick settings
@@ -176,6 +191,7 @@ impl ksni::Tray for VttTray {
         menu.push(
             SubMenu {
                 label: with_key(crate::i18n::t("tray.mode"), &self.shortcut_mode),
+                icon_name: "input-keyboard-symbolic".into(),
                 submenu: vec![RadioGroup {
                     selected: if self.hold { 0 } else { 1 },
                     select: Box::new(|t: &mut VttTray, i| {
@@ -201,6 +217,7 @@ impl ksni::Tray for VttTray {
         menu.push(
             SubMenu {
                 label: crate::i18n::t("tray.mic").into(),
+                icon_name: "audio-input-microphone-symbolic".into(),
                 submenu: vec![RadioGroup {
                     selected: mic_names.iter().position(|n| *n == self.mic).unwrap_or(0),
                     select: Box::new(move |t: &mut VttTray, i| {
@@ -220,6 +237,7 @@ impl ksni::Tray for VttTray {
         menu.push(
             SubMenu {
                 label: crate::i18n::t("tray.notes").into(),
+                icon_name: "x-office-document-symbolic".into(),
                 submenu: vec![RadioGroup {
                     selected: kinds.iter().position(|k| *k == self.notes).unwrap_or(0),
                     select: Box::new(move |t: &mut VttTray, i| t.send(Action::SetNotes(kinds[i].into()))),
@@ -238,8 +256,8 @@ impl ksni::Tray for VttTray {
         menu.push(check(crate::i18n::t("tray.keep_audio"), self.keep_audio, Action::ToggleKeepAudio));
         menu.push(check(crate::i18n::t("tray.beeps"), self.sounds, Action::ToggleSounds));
         menu.push(MenuItem::Separator);
-        menu.push(item(with_key(crate::i18n::t("tray.settings"), &self.shortcut_settings), Action::OpenSettings));
-        menu.push(item(crate::i18n::t("tray.updates"), Action::CheckUpdates));
+        menu.push(item_icon("preferences-system-symbolic", with_key(crate::i18n::t("tray.settings"), &self.shortcut_settings), Action::OpenSettings));
+        menu.push(item_icon("software-update-available-symbolic", crate::i18n::t("tray.updates"), Action::CheckUpdates));
         let mut about: Vec<MenuItem<Self>> = vec![
             StandardItem {
                 label: format!("Wortfluss {}", env!("CARGO_PKG_VERSION")),
@@ -255,12 +273,15 @@ impl ksni::Tray for VttTray {
             .into(),
         ];
         if !crate::credits::WEBSITE.is_empty() {
-            about.push(item(crate::i18n::t("tray.website"), Action::OpenUrl(crate::credits::WEBSITE.into())));
+            about.push(item_icon("web-browser-symbolic", crate::i18n::t("tray.website"), Action::OpenUrl(crate::credits::WEBSITE.into())));
         }
         about.push(item(crate::i18n::t("tray.github"), Action::OpenUrl(crate::credits::GITHUB.into())));
         about.push(item(crate::i18n::t("tray.source"), Action::OpenUrl(crate::credits::REPO.into())));
-        menu.push(SubMenu { label: crate::i18n::t("tray.about").into(), submenu: about, ..Default::default() }.into());
-        menu.push(item(crate::i18n::t("tray.quit"), Action::Quit));
+        menu.push(
+            SubMenu { label: crate::i18n::t("tray.about").into(), icon_name: "help-about-symbolic".into(), submenu: about, ..Default::default() }
+                .into(),
+        );
+        menu.push(item_icon("application-exit-symbolic", crate::i18n::t("tray.quit"), Action::Quit));
         menu
     }
 }

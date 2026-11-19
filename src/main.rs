@@ -2,6 +2,7 @@ mod audio;
 mod config;
 mod correct;
 mod credits;
+mod glass;
 mod help;
 mod hotkey;
 mod i18n;

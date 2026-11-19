@@ -109,10 +109,11 @@ statt eingefügt, und es gibt keine Blase.
 |---|---|
 | **Diktieren** | In ein Textfeld klicken, **rechte Strg-Taste halten**, sprechen, loslassen. Der Text erscheint nach etwa einer Sekunde. |
 | Sehen, dass es zuhört | Ein kurzer Piepton und eine kleine Blase mit bewegter Schallwelle neben dem Text-Cursor (in Apps, die ihren Cursor nicht melden: unten am Bildschirm). Graue Punkte: Der Text ist unterwegs. |
-| **Markierten Text verbessern** | Text markieren, **Strg+Alt+R**, Ton mit 1–6 wählen (korrigieren, professionell, zwanglos, höflich, Social Media, Emojis), **Enter** ersetzt ihn. In einer anderen Sprache: unter *Übersetzen in* die Sprache wählen und *Übersetzen* drücken. |
+| **Markierten Text verbessern oder übersetzen** | Text markieren, **Strg+Alt+R**: siehe [Abschnitt 5](#5-text-umschreiben-und-übersetzen). |
 | **Vorlesung, Video oder Besprechung mitschreiben** | **Strg+Alt+S** startet und stoppt; Transkript und Notizen landen in *Dokumente/vtt* (Symbol → *Ordner mit Transkripten öffnen*). Andere Personen nur mit deren Einverständnis aufnehmen. |
 | Einstellungen ändern | Symbol → *Alle Einstellungen …* (oder **Strg+Alt+V**), Startmenü → *Wortfluss settings*, oder `vtt setup`. |
 | Prüfen, ob alles funktioniert | `vtt check` (Windows: in der Eingabeaufforderung) |
+| Sehen, wie viel Zeit Sie sparen | Symbol in der Taskleiste anklicken, oder `vtt usage` (siehe [Abschnitt 6](#6-wie-viel-zeit-spare-ich)) |
 | Hilfe | Startmenü → *Wortfluss help*, oder `vtt help` |
 
 Tipps:
@@ -127,7 +128,65 @@ Tipps:
   Einstellungen …* → *Put text in by pasting* → No.
 - Blase ausschalten: *Alle Einstellungen …* → *Listening bubble at the text cursor*.
 
-## 5. Updates
+**Das Menü am Wortfluss-Symbol** (Taskleiste / oben rechts): oben steht, ob Wortfluss
+bereit ist und wie viel Zeit Sie diesen Monat gespart haben. Darunter: Sitzung starten
+(Computer-Ton, Mikrofon oder Anruf), Transkript-Ordner öffnen, Text umschreiben,
+Rechtschreibkorrektur an/aus, Halten oder Umschalten, Mikrofon wählen, Einstellungen,
+Updates und *Wortfluss beenden*.
+
+## 5. Text umschreiben und übersetzen
+
+Funktioniert in jedem Programm: E-Mail, Chat, Browser, Word …
+
+1. Den Text **markieren**.
+2. **Strg+Alt+R** drücken. Ein Fenster zeigt den markierten Text und darunter den Vorschlag.
+3. Einen **Stil** wählen, mit der Maus oder den Tasten **1–6**:
+   **Korrigieren** (nur Fehler), **Professionell**, **Zwanglos**, **Höflich**, **#social**
+   (für Beiträge, mit Hashtags) oder **Emojis hinzufügen**.
+   Der Text bleibt dabei in seiner Sprache.
+4. **Ersetzen** (oder **Enter**) setzt den Vorschlag an die Stelle des markierten Texts.
+   **Kopieren** legt ihn in die Zwischenablage, **Abbrechen** (oder **Esc**) schließt das
+   Fenster, ohne etwas zu ändern. Sie können den Vorschlag vorher auch selbst bearbeiten.
+
+![Das Umschreiben-Fenster: oben die Stile, darunter der markierte Text und der korrigierte Vorschlag](images/umschreiben.png)
+
+**In eine andere Sprache übersetzen:** unter *Übersetzen in* die Sprache wählen (22 Sprachen)
+und **Übersetzen** drücken. Übersetzt wird nach Sinn, nicht Wort für Wort, und im gewählten
+Stil: Ein höflicher Text bleibt höflich. Mit **Originalsprache** geht es zurück.
+
+![Dieselbe Geschichte, ins Englische übersetzt](images/uebersetzen.png)
+
+*Das Beispiel ist absichtlich voller Fehler und frei erfunden.*
+
+## 6. Wie viel Zeit spare ich?
+
+Sprechen ist etwa dreimal so schnell wie Tippen. Wortfluss rechnet mit, wie viel Zeit Sie
+das spart:
+
+- **Im Menü am Symbol:** *„Diesen Monat gespart: 3 h 40 min“*
+- **Genauer:** `vtt usage` zeigt heute, diesen Monat und insgesamt, große Werte auch in
+  Arbeitstagen (8 Stunden) und Arbeitsmonaten.
+
+So wird gerechnet: Zeichen, die Wortfluss für Sie geschrieben hat, geteilt durch Ihre
+Tippgeschwindigkeit, minus der Zeit, die Sie gesprochen haben. Nur Diktate zählen, keine
+Sitzungen. Gespeichert wird nur die *Anzahl* der Zeichen, nie der Text.
+
+**Ihre Tippgeschwindigkeit:** Ohne Angabe rechnet Wortfluss mit 40 Wörtern pro Minute, dem
+Durchschnitt. Ihre eigene messen: `vtt typing-test` (einen Satz abtippen, etwa 30 Sekunden),
+oder festlegen mit `vtt set typing-speed`.
+
+## 7. Feedback und Fehler melden
+
+Etwas funktioniert nicht, oder Ihnen fehlt etwas? Bitte melden:
+**[github.com/1a-khan/wortfluss/issues/new/choose](https://github.com/1a-khan/wortfluss/issues/new/choose)**
+(kostenloses GitHub-Konto nötig). Dort gibt es ein kurzes Formular für Fehler und eines für
+Ideen. Hilfreich sind: was Sie getan haben, was passiert ist, und die Ausgabe von `vtt check`.
+
+Bitte **niemals** Ihren API-Schlüssel oder private Texte in eine Meldung schreiben: Meldungen
+sind öffentlich. Sicherheitsprobleme bitte vertraulich melden (siehe
+[SECURITY.md](../SECURITY.md)).
+
+## 8. Updates
 
 Nichts zu tun: Wortfluss sucht alle paar Stunden nach neuen Versionen und installiert sie im
 Hintergrund, wenn Sie gerade nicht diktieren. Es werden nur vom Herausgeber signierte
@@ -136,7 +195,7 @@ Sofort prüfen: Symbol → *Nach Updates suchen* (meldet Suche und Download), od
 `vtt update`. Linux mit GNOME: Bittet ein Update ums Ab- und Anmelden, das bei Gelegenheit
 tun.
 
-## 6. Deinstallieren
+## 9. Deinstallieren
 
 - **Windows:** Einstellungen → Apps → *Wortfluss* → Deinstallieren (oder Startmenü →
   *Uninstall Wortfluss*). Einstellungen und Transkripte bleiben in `%APPDATA%\Wortfluss` und
@@ -156,7 +215,8 @@ tun.
 4. Eine App zeigt seltsame oder doppelte Buchstaben: prüfen, ob *Put text in by pasting*
    eingeschaltet ist (`vtt set paste`).
 5. Weiterhin Probleme: [Problem melden](https://github.com/1a-khan/wortfluss/issues/new/choose)
-   (nie den API-Schlüssel posten), oder [MIAK IT](https://miak-it.de) kontaktieren.
+   (siehe [Abschnitt 7](#7-feedback-und-fehler-melden)), oder [MIAK IT](https://miak-it.de)
+   kontaktieren.
 
 ---
 Wortfluss wird von Ammad Khan, [MIAK IT](https://miak-it.de) entwickelt. Frei und quelloffen

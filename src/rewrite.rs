@@ -12,6 +12,7 @@
 
 use crate::config::{self, Active};
 use crate::correct;
+use crate::glass::{self, Icon, Kind};
 use crate::i18n::t;
 use anyhow::{bail, Result};
 use eframe::egui;
@@ -237,6 +238,12 @@ struct App {
     copied: Option<Instant>,
     /// Windows: the window the selection was copied from (0 if unknown).
     window: isize,
+    /// The app icon for the header.
+    logo: egui::TextureHandle,
+    /// Docs: save a screenshot here and close (`_rewrite --demo ... --screenshot FILE`).
+    screenshot: Option<std::path::PathBuf>,
+    screenshot_done: Arc<std::sync::atomic::AtomicBool>,
+    frames: u32,
 }
 
 impl App {
@@ -374,6 +381,10 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4] // the glass panel paints itself; outside it stays transparent
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
         self.read_selection(ctx);
@@ -419,104 +430,184 @@ impl eframe::App for App {
             self.show(n, lang, ctx);
         }
 
-        egui::Panel::bottom("buttons").show(ui, |ui| {
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.weak(t("rw.keys"));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add_enabled(ready, egui::Button::new(t("rw.replace"))).clicked() {
-                        self.finish(ctx, true);
-                    }
-                    let just_copied = self.copied.is_some_and(|c| c.elapsed() < Duration::from_millis(1500));
-                    let copy_label = t(if just_copied { "rw.copied" } else { "rw.copy" });
-                    if ui.add_enabled(ready, egui::Button::new(copy_label)).clicked() {
-                        ctx.copy_text(self.shown.clone());
-                        self.copied = Some(Instant::now());
-                        ctx.request_repaint_after(Duration::from_millis(1600));
-                    }
-                    if ui.button(t("rw.cancel")).clicked() {
-                        self.finish(ctx, false);
+        let panel = glass::paint_background(ctx);
+        let inner = panel.shrink2(egui::vec2(18.0, 14.0));
+        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)));
+        let ui = &mut ui;
+
+        let title = t("rw.title");
+        let title = title.split_once(" – ").map_or(title, |(_, rest)| rest);
+        if glass::header(ui, &self.logo, title) {
+            self.finish(ctx, false);
+        }
+        ui.add_space(6.0);
+
+        let Some(original) = self.original.clone() else {
+            ui.add_space(30.0);
+            if gave_up {
+                ui.label(egui::RichText::new(t("rw.nothing")).color(glass::TEXT_DIM));
+            } else {
+                glass::working(ui, t("rw.waiting"));
+            }
+            return;
+        };
+
+        // Tones
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+            for (i, tone) in TONES.iter().enumerate() {
+                let label = t(&format!("tone.{}", tone.id));
+                if glass::chip(ui, &(i + 1).to_string(), label, i == self.tone).clicked() {
+                    let lang = self.lang;
+                    self.show(i, lang, ctx);
+                }
+            }
+        });
+        ui.add_space(2.0);
+
+        // Translation
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+            glass::paint_icon(ui.painter(), rect, Icon::Globe, glass::TEXT_DIM);
+            ui.label(egui::RichText::new(t("rw.translate_to")).color(glass::TEXT_DIM));
+            let mut target = self.target;
+            egui::ComboBox::from_id_salt("target")
+                .selected_text(TARGETS[target].2)
+                .width(150.0)
+                .height(320.0)
+                .show_ui(ui, |ui| {
+                    for (i, x) in TARGETS.iter().enumerate() {
+                        ui.selectable_value(&mut target, i, x.2);
                     }
                 });
-            });
-            ui.add_space(6.0);
+            if target != self.target {
+                self.set_target(target, ctx);
+            }
+            if self.lang.is_none() {
+                // Translates the suggestion as shown, so it has to be there first.
+                if glass::button(ui, Some(Icon::Globe), t("rw.translate"), Kind::Secondary, ready).clicked() {
+                    self.translate(ctx);
+                }
+            } else if glass::button(ui, Some(Icon::Back), t("rw.own_language"), Kind::Secondary, true).clicked() {
+                let tone = self.tone;
+                self.show(tone, None, ctx);
+            }
         });
+        ui.add_space(4.0);
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            let Some(original) = self.original.clone() else {
-                ui.add_space(20.0);
-                ui.label(t(if gave_up { "rw.nothing" } else { "rw.waiting" }));
-                return;
-            };
-            ui.horizontal_wrapped(|ui| {
-                for (i, tone) in TONES.iter().enumerate() {
-                    let label = t(&format!("tone.{}", tone.id));
-                    if ui.selectable_label(i == self.tone, format!("{} {label}", i + 1)).clicked() {
-                        let lang = self.lang;
-                        self.show(i, lang, ctx);
-                    }
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label(format!("🌐 {}", t("rw.translate_to")));
-                let mut target = self.target;
-                egui::ComboBox::from_id_salt("target")
-                    .selected_text(TARGETS[target].2)
-                    .height(320.0)
-                    .show_ui(ui, |ui| {
-                        for (i, x) in TARGETS.iter().enumerate() {
-                            ui.selectable_value(&mut target, i, x.2);
-                        }
-                    });
-                if target != self.target {
-                    self.set_target(target, ctx);
-                }
-                if self.lang.is_none() {
-                    // Translates the suggestion as shown, so it has to be there first.
-                    if ui.add_enabled(ready, egui::Button::new(t("rw.translate"))).clicked() {
-                        self.translate(ctx);
-                    }
-                } else if ui.button(format!("↩ {}", t("rw.own_language"))).clicked() {
-                    let tone = self.tone;
-                    self.show(tone, None, ctx);
-                }
-            });
-            ui.separator();
-            ui.weak(t("rw.selected"));
-            egui::ScrollArea::vertical().id_salt("orig").max_height(90.0).show(ui, |ui| {
-                ui.label(&original);
-            });
-            ui.add_space(8.0);
-            match self.lang {
-                Some(l) => ui.strong(format!("{} – {}", t("rw.translation"), TARGETS[l].2)),
-                None => ui.strong(t("rw.suggestion")),
-            };
+        // Selected text: a few lines, scrollable (the scroll bar shows there is more).
+        glass::section_label(ui, Icon::Text, t("rw.selected"));
+        glass::card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            // Exactly three lines: a cut line would look like a mistake.
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let three = ui.painter().layout_no_wrap("A\nA\nA".into(), font, glass::TEXT).size().y;
+            egui::ScrollArea::vertical()
+                .id_salt("orig")
+                .max_height(three)
+                .min_scrolled_height(three)
+                .auto_shrink([false, true])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new(&original).color(glass::TEXT_DIM));
+                });
+        });
+        ui.add_space(4.0);
+
+        // Suggestion or translation: fills the space down to the buttons.
+        let heading = match self.lang {
+            Some(l) => format!("{} · {}", t("rw.translation"), TARGETS[l].2),
+            None => t("rw.suggestion").to_string(),
+        };
+        glass::section_label(ui, if self.lang.is_some() { Icon::Globe } else { Icon::Sparkle }, &heading);
+        const FOOTER: f32 = 46.0;
+        let height = (ui.available_height() - FOOTER - 22.0).max(60.0);
+        glass::card().fill(egui::Color32::from_rgba_unmultiplied(6, 8, 14, 110)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.set_height(height);
             match &current {
-                None => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(t(if self.lang.is_some() { "rw.translating" } else { "rw.working" }));
-                    });
-                }
+                None => glass::working(ui, t(if self.lang.is_some() { "rw.translating" } else { "rw.working" })),
                 Some(Err(e)) => {
-                    ui.colored_label(egui::Color32::from_rgb(230, 90, 90), e);
-                    if ui.button(t("rw.retry")).clicked() {
+                    ui.label(egui::RichText::new(e).color(glass::DANGER));
+                    ui.add_space(4.0);
+                    if glass::button(ui, Some(Icon::Retry), t("rw.retry"), Kind::Secondary, true).clicked() {
                         let (tone, lang) = (self.tone, self.lang);
                         self.request(tone, lang, None, ctx);
                     }
                 }
                 Some(Ok(_)) => {
-                    egui::ScrollArea::vertical().id_salt("new").show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("new")
+                        .max_height(height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
                         ui.add(
                             egui::TextEdit::multiline(&mut self.shown)
+                                .frame(egui::Frame::NONE)
                                 .desired_width(f32::INFINITY)
-                                .desired_rows(6),
+                                .min_size(egui::vec2(0.0, height - 4.0)),
                         );
-                    });
+                        });
                 }
             }
         });
+
+        // Buttons
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            glass::hint(ui, t("rw.keys"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if glass::button(ui, Some(Icon::Replace), t("rw.replace"), Kind::Primary, ready).clicked() {
+                    self.finish(ctx, true);
+                }
+                let just_copied = self.copied.is_some_and(|c| c.elapsed() < Duration::from_millis(1500));
+                let (icon, label) = if just_copied {
+                    (Icon::Check, t("rw.copied").trim_end_matches('✔').trim())
+                } else {
+                    (Icon::Copy, t("rw.copy"))
+                };
+                if glass::button(ui, Some(icon), label, Kind::Secondary, ready).clicked() {
+                    ctx.copy_text(self.shown.clone());
+                    self.copied = Some(Instant::now());
+                    ctx.request_repaint_after(Duration::from_millis(1600));
+                }
+                if glass::button(ui, None, t("rw.cancel"), Kind::Secondary, true).clicked() {
+                    self.finish(ctx, false);
+                }
+            });
+        });
+
+        self.demo_screenshot(ctx);
     }
+}
+
+impl App {
+    /// `--screenshot FILE` (docs): once the window has settled, save it as PNG and close.
+    fn demo_screenshot(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.screenshot.clone() else { return };
+        self.frames += 1;
+        if self.frames == 20 {
+            let saved = self.screenshot_done.clone();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |img| {
+                let ok = save_png(&path, &img).map_err(|e| eprintln!("screenshot: {e:#}")).is_ok();
+                saved.store(ok, std::sync::atomic::Ordering::SeqCst);
+            })));
+        }
+        if self.screenshot_done.load(std::sync::atomic::Ordering::SeqCst) || self.frames > 400 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        ctx.request_repaint_after(Duration::from_millis(30));
+    }
+}
+
+fn save_png(path: &std::path::Path, img: &egui::ColorImage) -> Result<()> {
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut enc = png::Encoder::new(file, img.size[0] as u32, img.size[1] as u32);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let data: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect();
+    enc.write_header()?.write_image_data(&data)?;
+    Ok(())
 }
 
 /// Windows: copy the selection with Ctrl+C, then put the clipboard back as it was.
@@ -606,14 +697,26 @@ fn saved_target() -> usize {
         .unwrap_or(0)
 }
 
+/// Example for the screenshots in the guide (`_rewrite --demo`): a deliberately
+/// misspelt nonsense story, its correction and its English translation.
+const DEMO_ORIGINAL: &str = "Gestan furr der schrumblige Wolknfrosch mid ainerr kwitschnnden Gurknkutsch nach Plundahaußn. Dorrt wolde err ain Käsekonzert für sibnundzwanzig fligende Löffl veranstaltn. Derr Dirrigent, ain müda Pudink, verwexlte ständich di Notn mid sein Sockn und rief: „Bitte nich auf di Trompetn draufsezn!“ Am Ende tanztten alle mid krumen Knien ain verwirrendn Waltzer im Badezima nebndran.";
+const DEMO_CORRECT: &str = "Gestern fuhr der schrumpelige Wolkenfrosch mit einer quietschenden Gurkenkutsche nach Plunderhausen. Dort wollte er ein Käsekonzert für siebenundzwanzig fliegende Löffel veranstalten. Der Dirigent, ein müder Pudding, verwechselte ständig die Noten mit seinen Socken und rief: „Bitte nicht auf die Trompeten draufsetzen!“ Am Ende tanzten alle mit krummen Knien einen verwirrenden Walzer im Badezimmer nebenan.";
+const DEMO_ENGLISH: &str = "Yesterday, the shriveled cloud frog drove a squeaky pickle carriage to Plunderhausen. There, he wanted to host a cheese concert for twenty-seven flying spoons. The conductor, a tired pudding, kept confusing the sheet music with his socks and shouted, \"Please don't sit on the trumpets!\" In the end, everyone danced a confusing waltz with bent knees in the bathroom next door.";
+
 /// `vtt _rewrite [--auto TONE]`: the window.
+/// Docs: `vtt _rewrite --demo [--english] [--screenshot FILE]` shows a fixed example
+/// without asking any service.
 pub fn window(args: &[String]) -> Result<()> {
-    let cfg = config::load()?;
-    if let Some(p) = cfg.problem() {
-        bail!("{p}. Run `vtt setup`");
+    let demo = args.iter().any(|a| a == "--demo");
+    let screenshot = args.iter().position(|a| a == "--screenshot").and_then(|i| args.get(i + 1)).map(std::path::PathBuf::from);
+    let cfg = if demo { config::Config::default() } else { config::load()? };
+    if !demo {
+        if let Some(p) = cfg.problem() {
+            bail!("{p}. Run `vtt setup`");
+        }
     }
     let active = cfg.active();
-    if active.correction_model.is_empty() {
+    if active.correction_model.is_empty() && !demo {
         bail!("{} has no text model for rewriting", active.provider.name);
     }
     let auto_tone = args.iter().position(|a| a == "--auto").and_then(|i| args.get(i + 1));
@@ -624,9 +727,9 @@ pub fn window(args: &[String]) -> Result<()> {
     #[cfg(not(windows))]
     let window = 0isize;
     #[cfg(windows)]
-    let original = copy_selection();
+    let original = if demo { Some(DEMO_ORIGINAL.to_string()) } else { copy_selection() };
     #[cfg(not(windows))]
-    let original: Option<String> = None;
+    let original: Option<String> = demo.then(|| DEMO_ORIGINAL.to_string());
 
     let title = t("rw.title");
     let icon = egui::IconData {
@@ -634,31 +737,54 @@ pub fn window(args: &[String]) -> Result<()> {
         width: 64,
         height: 64,
     };
+    let m = 2.0 * glass::MARGIN;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(title)
             .with_app_id("wortfluss")
-            .with_inner_size([580.0, 440.0])
-            .with_min_inner_size([400.0, 300.0])
+            .with_inner_size([720.0 + m, 560.0 + m])
+            .with_min_inner_size([460.0 + m, 380.0 + m])
+            .with_decorations(false)
+            .with_transparent(glass::TRANSPARENT)
             .with_always_on_top()
             .with_icon(icon),
         centered: true,
         ..Default::default()
     };
     let model = active.correction_model.clone();
+    let english = args.iter().any(|a| a == "--english");
     eframe::run_native(
         title,
         options,
         Box::new(move |cc| {
+            glass::apply_style(&cc.egui_ctx);
+            #[cfg(windows)]
+            round_corners(cc);
             #[cfg(target_os = "linux")]
             let primary = {
                 use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
                 match cc.display_handle().map(|h| h.as_raw()) {
                     // Safety: the display stays alive as long as the window.
-                    Ok(RawDisplayHandle::Wayland(d)) => Some(unsafe { smithay_clipboard::Clipboard::new(d.display.as_ptr()) }),
+                    Ok(RawDisplayHandle::Wayland(d)) if !demo => {
+                        Some(unsafe { smithay_clipboard::Clipboard::new(d.display.as_ptr()) })
+                    }
                     _ => None,
                 }
             };
+            let logo = cc.egui_ctx.load_texture(
+                "logo",
+                egui::ColorImage::from_rgba_unmultiplied([64, 64], &crate::icon::rgba(64, crate::icon::State::Ready, true)),
+                egui::TextureOptions::LINEAR,
+            );
+            let answers: Vec<Vec<Slot>> =
+                TONES.iter().map(|_| (0..=TARGETS.len()).map(|_| Slot { id: 0, answer: None }).collect()).collect();
+            let answers = Arc::new(Mutex::new(answers));
+            let en = TARGETS.iter().position(|x| x.0 == "en").unwrap_or(0);
+            if demo {
+                let mut a = answers.lock().unwrap();
+                a[0][0] = Slot { id: 1, answer: Some(Answer::Text(DEMO_CORRECT.into())) };
+                a[0][column(Some(en))] = Slot { id: 2, answer: Some(Answer::Text(DEMO_ENGLISH.into())) };
+            }
             let mut app = App {
                 active,
                 model,
@@ -668,25 +794,46 @@ pub fn window(args: &[String]) -> Result<()> {
                 primary,
                 tone,
                 lang: None,
-                answers: Arc::new(Mutex::new(
-                    TONES.iter().map(|_| (0..=TARGETS.len()).map(|_| Slot { id: 0, answer: None }).collect()).collect(),
-                )),
-                target: saved_target(),
+                answers,
+                target: if demo { en } else { saved_target() },
                 shown: String::new(),
                 shown_for: None,
                 auto: auto_tone.is_some(),
                 done: false,
                 copied: None,
                 window,
+                logo,
+                screenshot,
+                screenshot_done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                frames: 0,
             };
             if let Some(t) = original {
                 app.set_original(t, &cc.egui_ctx);
+            }
+            if demo && english {
+                app.lang = Some(en);
             }
             Ok(Box::new(app))
         }),
     )
     .map_err(|e| anyhow::anyhow!("could not open the window: {e}"))?;
     Ok(())
+}
+
+/// Windows 11: rounded corners and a dark frame for the frameless window (older
+/// Windows ignores both and keeps square corners).
+#[cfg(windows)]
+fn round_corners(cc: &eframe::CreationContext) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE};
+    let Ok(RawWindowHandle::Win32(h)) = cc.window_handle().map(|h| h.as_raw()) else { return };
+    let hwnd = h.hwnd.get() as windows_sys::Win32::Foundation::HWND;
+    let round: i32 = 2; // DWMWCP_ROUND
+    let dark: i32 = 1;
+    unsafe {
+        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &round as *const i32 as _, 4);
+        DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, &dark as *const i32 as _, 4);
+    }
 }
 
 #[cfg(test)]
