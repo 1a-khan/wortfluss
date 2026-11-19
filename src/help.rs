@@ -33,12 +33,13 @@ COMMANDS
     vtt setup        menu of all settings with current values; change one at a time
     vtt set <what>   change one thing directly: service, model, key, correction, phrases,
                      language, mic, hotkey, mode, sounds, indicator, paste, layout, autostart,
-                     session, ui-language, shortcuts, advanced
+                     session, ui-language, shortcuts, typing-speed, advanced
     vtt phrases      list names/words to spell right; vtt phrases add \"A, B\" / remove \"A\"
     vtt check        test everything vtt needs and show how to fix problems
     vtt start        start in the background        vtt stop    stop it
     vtt              run in this terminal and show what is typed (good for testing)
-    vtt usage        audio sent today / this month / all time, with cost
+    vtt usage        audio sent today / this month / all time, with cost, and time saved
+    vtt typing-test  measure how fast you type (used for \"time saved\")
     vtt retry [FILE] transcribe pieces that failed earlier (e.g. no internet); fills
                      the gaps in session transcripts (FILE, or all in the session folder)
     vtt update       install a new version now (automatic every 6 h; auto_update = false: off)
@@ -300,6 +301,13 @@ rate limits (you then get a \"rate limit\" notification; wait a bit).
     vtt usage    requests, minutes and estimated cost: today, this month, all time.
                  OpenRouter reports the exact cost of each request; for the others vtt
                  estimates from list prices. Groq counts each request as at least 10 s.
+
+TIME SAVED
+`vtt usage` and the tray menu show how much time dictating saved you: the characters each
+dictation typed, divided by your typing speed, minus the time you spent speaking. Only
+dictations count, not sessions or rewrites; only the number of characters is logged, never
+the text. Typing speed: 40 words per minute unless you set yours (`vtt typing-test` or
+`vtt set typing-speed`). Large totals are shown in working days (8 h) and months (21 days).
 
 Very short presses (< 0.4 s) and pieces without speech are never sent. Silence at the
 start and end is cut off and long pauses inside are shortened before sending. Official numbers are in your provider's dashboard.

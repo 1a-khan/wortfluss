@@ -82,6 +82,8 @@ pub struct Config {
     /// Put text in by pasting it (fast); false: type it key by key.
     pub paste: bool,
     pub key_delay_ms: u64,
+    /// How fast the person types (words per minute), for "time saved".
+    pub typing_wpm: u32,
 
     pub groq: ProviderSettings,
     pub openai: ProviderSettings,
@@ -134,6 +136,7 @@ impl Default for Config {
             add_trailing_space: true,
             paste: true,
             key_delay_ms: 3,
+            typing_wpm: crate::usage::DEFAULT_WPM,
             groq: ProviderSettings::default(),
             openai: ProviderSettings::default(),
             openrouter: ProviderSettings::default(),
@@ -485,6 +488,10 @@ paste = {paste}
 
 # Milliseconds between simulated key presses when typing (raise it if an app drops characters)
 key_delay_ms = {delay}
+
+# How fast you type, in words per minute. Only used to show how much time dictating
+# saved you (`vtt usage`, tray menu). Measure it with `vtt typing-test`.
+typing_wpm = {wpm}
 "#,
         provider = q(&c.provider),
         language = q(&c.language),
@@ -517,6 +524,7 @@ key_delay_ms = {delay}
         space = c.add_trailing_space,
         delay = c.key_delay_ms,
         paste = c.paste,
+        wpm = c.typing_wpm,
     );
     for p in providers::PROVIDERS {
         let s = c.settings(p.id);

@@ -47,6 +47,7 @@ mod typer;
 #[cfg(windows)]
 #[path = "windows/typer.rs"]
 mod typer;
+mod typing_test;
 mod update;
 mod usage;
 
@@ -95,6 +96,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("usage") => usage::report(),
+        Some("typing-test" | "typingtest" | "speed-test") => setup::typing_test(),
         Some("retry") => retry(args.get(1)),
         Some("session" | "sessions") => session::cmd(&args[1..]),
         Some("notes") => notes::cmd(&args[1..]),
@@ -862,10 +864,12 @@ fn process(job: Job, cfg: &Config, text_tx: &Sender<String>) -> bool {
     let show = std::io::stdout().is_terminal(); // dictated text never goes to the log file
     let text = match stt::transcribe(&a, &cfg.language, &phrases.join(", "), &wav) {
         Ok(t) => {
-            if let Err(e) = usage::record(a.provider.id, &a.model, clip.seconds(), t.cost) {
+            let dropped = t.text.is_empty() || is_hallucination(&t.text);
+            let typed = if dropped { 0 } else { t.text.chars().count() };
+            if let Err(e) = usage::record_dictation(a.provider.id, &a.model, clip.seconds(), t.cost, typed, recorded) {
                 eprintln!("could not log usage: {e:#}");
             }
-            if t.text.is_empty() || is_hallucination(&t.text) {
+            if dropped {
                 if !t.text.is_empty() && show {
                     println!("[dropped likely made-up text] {}", t.text);
                 }
@@ -965,7 +969,7 @@ fn retry(file: Option<&String>) -> Result<()> {
         match stt::transcribe(&a, &cfg.language, &cfg.phrases().join(", "), &wav) {
             Ok(t) => {
                 let secs = wav.len().saturating_sub(44) as f32 / (audio::TARGET_RATE as f32 * 2.0);
-                let _ = usage::record(a.provider.id, &a.model, secs, t.cost);
+                let _ = usage::record_dictation(a.provider.id, &a.model, secs, t.cost, t.text.chars().count(), secs);
                 println!("{}:\n{}\n", path.file_name().unwrap_or_default().to_string_lossy(), t.text);
                 std::fs::remove_file(&path)?;
             }

@@ -37,7 +37,8 @@ within a few seconds.
 | `vtt check` | tests everything (keyboard access, mic, key, model, autostart) and says what to fix |
 | `vtt start` / `vtt stop` | start in the background / stop |
 | `vtt` | run in this terminal (shows what it types; asks setup questions on first run) |
-| `vtt usage` | audio sent today / this month / all time, with estimated cost |
+| `vtt usage` | audio sent today / this month / all time, with estimated cost, and time saved by dictating |
+| `vtt typing-test` | measure your typing speed (used for "time saved"; default 40 words per minute) |
 | `vtt autostart on\|off` | start at login or not |
 | `vtt test-type` / `vtt test-mic` | type a test sentence / record 4 s to `vtt-test.wav` |
 
@@ -266,6 +267,14 @@ and unlocked when you log in.
 - Environment variables (`GROQ_API_KEY`, ...) still override and may hold a plain key or an
   `enc:` value copied from `secrets.env`.
 - Keyring reset or a new computer: run `vtt setup` and enter the key again.
+
+## Dependency security
+
+Every push runs [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) (policy in
+`deny.toml`) against the RustSec advisory database: known vulnerabilities, unmaintained
+crates, licenses and download sources. The same check runs every Monday for `main`,
+Dependabot proposes updates, GitHub Actions are pinned to commit hashes, and each release
+carries an SBOM (`sbom-*.cdx.json`). Details in [SECURITY.md](SECURITY.md).
 
 ## Build
 

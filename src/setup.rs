@@ -154,6 +154,7 @@ pub enum Setting {
     Speakers,
     UiLanguage,
     Shortcuts,
+    TypingSpeed,
     Advanced,
 }
 
@@ -177,7 +178,8 @@ const SETTINGS: &[(Setting, &str, &[&str], &str)] = &[
     (Setting::Speakers, "speakers", &["speaker", "diarization", "who"], "Separate speakers in sessions"),
     (Setting::UiLanguage, "ui-language", &["interface", "ui", "sprache"], "Interface language (tray, notifications)"),
     (Setting::Shortcuts, "shortcuts", &["shortcut", "keys", "combos", "tray"], "Keyboard shortcuts & tray icon"),
-    (Setting::Advanced, "advanced", &["spacing", "typing-speed", "pieces"], "Advanced (spacing, typing speed, pieces)"),
+    (Setting::TypingSpeed, "typing-speed", &["wpm", "speed", "saved", "time-saved"], "Your typing speed (for time saved)"),
+    (Setting::Advanced, "advanced", &["spacing", "typing-delay", "delay", "pieces"], "Advanced (spacing, typing delay, pieces)"),
 ];
 
 pub fn setting_names() -> String {
@@ -244,6 +246,7 @@ fn current_value(cfg: &Config, s: Setting) -> String {
             cfg.session_notes,
             if cfg.session_hotkey.is_empty() { "none".to_string() } else { hotkey::pretty(&cfg.session_hotkey) }
         ),
+        Setting::TypingSpeed => format!("{} words per minute", cfg.typing_wpm),
         Setting::Advanced => format!(
             "space after text {}, {} ms per key, pieces ~{} s",
             if cfg.add_trailing_space { "on" } else { "off" },
@@ -310,6 +313,56 @@ pub fn set(name: Option<&str>) -> Result<()> {
     let mut cfg = load_for_setup();
     change(&t, &mut cfg, setting)?;
     save_now(&cfg)
+}
+
+/// `vtt typing-test`: measure the typing speed and offer to save it.
+pub fn typing_test() -> Result<()> {
+    need_terminal()?;
+    let t = ColorfulTheme::default();
+    let mut cfg = load_for_setup();
+    let Some(wpm) = crate::typing_test::run(&cfg.language)? else { return Ok(()) };
+    if Confirm::with_theme(&t)
+        .with_prompt(format!("Use {wpm} words per minute for \"time saved\"? (now {})", cfg.typing_wpm))
+        .default(true)
+        .interact()?
+    {
+        cfg.typing_wpm = wpm;
+        save_now(&cfg)?;
+    }
+    Ok(())
+}
+
+fn ask_typing_speed(t: &ColorfulTheme, cfg: &mut Config) -> Result<()> {
+    println!("  Used only to show how much time dictating saved you (`vtt usage`, tray menu).");
+    let options = [
+        "Slow (25 words per minute)",
+        "Average (40 words per minute)",
+        "Fast (70 words per minute)",
+        "Measure it now (typing test, about 30 seconds)",
+        "Enter a number",
+    ];
+    let current = match cfg.typing_wpm {
+        25 => 0,
+        40 => 1,
+        70 => 2,
+        _ => 4,
+    };
+    let i = Select::with_theme(t).with_prompt("How fast do you type?").items(options).default(current).interact()?;
+    cfg.typing_wpm = match i {
+        0 => 25,
+        1 => 40,
+        2 => 70,
+        3 => match crate::typing_test::run(&cfg.language)? {
+            Some(w) => w,
+            None => return Ok(()),
+        },
+        _ => Input::with_theme(t)
+            .with_prompt("Words per minute")
+            .default(cfg.typing_wpm)
+            .validate_with(|v: &u32| if (5..=250).contains(v) { Ok(()) } else { Err("between 5 and 250") })
+            .interact_text()?,
+    };
+    Ok(())
 }
 
 /// Menu lines cut to the terminal's width: a line that wraps makes the menu redraw
@@ -421,6 +474,7 @@ fn change(t: &ColorfulTheme, cfg: &mut Config, s: Setting) -> Result<()> {
                 .interact()?;
             platform::set_autostart(on)?;
         }
+        Setting::TypingSpeed => ask_typing_speed(t, cfg)?,
         Setting::Advanced => ask_advanced(t, cfg)?,
         Setting::Session => ask_session(t, cfg)?,
         Setting::Speakers => ask_speakers(t, cfg)?,
@@ -539,7 +593,7 @@ fn full(in_foreground: bool) -> Result<()> {
         .interact()?;
 
     if Confirm::with_theme(&t)
-        .with_prompt("Change advanced settings (spacing, typing speed, piece size)?")
+        .with_prompt("Change advanced settings (spacing, typing delay, piece size)?")
         .default(false)
         .interact()?
     {

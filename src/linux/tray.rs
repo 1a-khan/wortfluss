@@ -35,6 +35,7 @@ pub struct VttTray {
     shortcut_mode: String,
     shortcut_settings: String,
     shortcut_rewrite: String,
+    typing_wpm: u32,
 }
 
 /// Show the tray icon. None if the desktop has no tray (vtt works without it).
@@ -72,6 +73,7 @@ pub fn start(cfg: &Config, tx: Sender<Event>) -> Option<Handle> {
         shortcut_mode: combo(&cfg.shortcut_mode),
         shortcut_settings: combo(&cfg.shortcut_settings),
         shortcut_rewrite: combo(&cfg.shortcut_rewrite),
+        typing_wpm: cfg.typing_wpm,
     };
     match tray.spawn() {
         Ok(h) => Some(h),
@@ -149,8 +151,12 @@ impl ksni::Tray for VttTray {
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let mut menu: Vec<MenuItem<Self>> = vec![
             StandardItem { label: self.status(), enabled: false, ..Default::default() }.into(),
-            MenuItem::Separator,
         ];
+        // Rebuilt after every dictation (the icon changes), so it stays current.
+        if let Some(saved) = crate::usage::tray_line(self.typing_wpm) {
+            menu.push(StandardItem { label: saved, enabled: false, ..Default::default() }.into());
+        }
+        menu.push(MenuItem::Separator);
 
         // Sessions
         if self.session {

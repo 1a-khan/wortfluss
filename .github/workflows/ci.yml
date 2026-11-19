@@ -5,21 +5,38 @@ on:
     branches: ["**"]
   pull_request:
 
+# Actions are pinned to commit hashes (a moved tag can't change what runs here);
+# Dependabot proposes updates. The token can only read the repository.
+permissions:
+  contents: read
+
 jobs:
+  # Supply chain: known vulnerabilities, unmaintained crates, licenses, sources
+  # (policy in deny.toml). A release needs this green too (scripts/release.sh).
+  dependencies:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2
+        with:
+          command: check
+
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: System libraries (ALSA, xkbcommon)
         run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libxkbcommon-dev
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Build
         run: cargo build --release --locked
       - name: Test
         run: cargo test --release --locked
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vtt-linux-x86_64
           path: target/release/vtt
@@ -27,9 +44,11 @@ jobs:
   windows:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Build
         run: cargo build --release --locked
       - name: Test
@@ -59,7 +78,7 @@ jobs:
           & $iscc "/DAppVersion=$version" "/DBinDir=..\target\release" installer\wortfluss.iss
           if ($LASTEXITCODE -ne 0) { throw "installer build failed" }
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wortfluss-windows-x86_64
           path: |

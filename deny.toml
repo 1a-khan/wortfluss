@@ -1,0 +1,51 @@
+# cargo-deny policy: `cargo deny check` (runs in CI on every push and every Monday).
+# Docs: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Only what the Linux and Windows builds really compile.
+targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+all-features = false
+
+[advisories]
+# RustSec advisory database. Known vulnerabilities fail the check; "unmaintained" and
+# "unsound" crates fail too unless listed below with the reason they are accepted.
+version = 2
+yanked = "deny"
+ignore = [
+    # zvariant (and zbus_names, zvariant_derive) were merged into zbus 6. Used on Linux by our
+    # GNOME settings code, ksni (tray) and keyring. Not a vulnerability; move to zbus 6
+    # once ksni and keyring have. Tracked in CHG-2026-024.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: merged into zbus 6, waiting for ksni/keyring" },
+]
+
+[licenses]
+# Licenses that can be combined with Wortfluss' Apache-2.0 and shipped in a binary.
+version = 2
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "0BSD",
+    "MPL-2.0",
+    "Unlicense",              # ksni (tray icon on Linux)
+    "CDLA-Permissive-2.0",    # webpki-roots (the list of trusted root certificates)
+    "OFL-1.1",                # fonts in the rewrite window (egui's default fonts)
+    "Ubuntu-font-1.0",        # same
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+# Crates only from crates.io: no git dependencies, no other registries.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

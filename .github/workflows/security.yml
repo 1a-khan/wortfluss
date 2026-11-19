@@ -1,0 +1,21 @@
+name: Weekly dependency audit
+
+# New advisories are published all the time, also for code that hasn't changed:
+# check the dependencies of main every Monday. A failure shows up in the Actions tab
+# and GitHub sends the owner a notification.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2
+        with:
+          command: check

@@ -30,6 +30,7 @@ pub struct VttTray {
     shortcut_correction: String,
     shortcut_mode: String,
     shortcut_settings: String,
+    typing_wpm: u32,
 }
 
 type Change = Box<dyn FnOnce(&mut VttTray) + Send>;
@@ -67,6 +68,7 @@ pub fn start(cfg: &Config, events: Sender<Event>) -> Option<Handle> {
         shortcut_correction: combo(&cfg.shortcut_correction),
         shortcut_mode: combo(&cfg.shortcut_mode),
         shortcut_settings: combo(&cfg.shortcut_settings),
+        typing_wpm: cfg.typing_wpm,
     };
     let (tx, rx) = mpsc::channel::<Change>();
     let (ready_tx, ready_rx) = mpsc::channel();
@@ -159,7 +161,12 @@ fn menu(t: &VttTray) -> Menu {
     let check = |id: &str, label: &str, on: bool| CheckMenuItem::with_id(id, label, true, on, None);
     let sep = PredefinedMenuItem::separator;
 
-    let mut items: Vec<Box<dyn IsMenuItem>> = vec![Box::new(MenuItem::new(status(t), false, None)), Box::new(sep())];
+    let mut items: Vec<Box<dyn IsMenuItem>> = vec![Box::new(MenuItem::new(status(t), false, None))];
+    // Rebuilt after every dictation (the icon changes), so it stays current.
+    if let Some(saved) = crate::usage::tray_line(t.typing_wpm) {
+        items.push(Box::new(MenuItem::new(saved, false, None)));
+    }
+    items.push(Box::new(sep()));
     if t.session {
         items.push(Box::new(item("stop", crate::i18n::t("tray.stop_session"))));
     } else {

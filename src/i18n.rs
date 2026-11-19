@@ -99,6 +99,11 @@ pub fn tf(key: &str, values: &[&str]) -> String {
     fill(t(key), values)
 }
 
+/// `tf` in a given language (terminal output stays English).
+pub fn tf_in(l: Lang, key: &str, values: &[&str]) -> String {
+    fill(t_in(l, key), values)
+}
+
 fn fill(template: &str, values: &[&str]) -> String {
     let mut out = String::with_capacity(template.len() + 32);
     let mut parts = template.split("{}");
@@ -282,6 +287,30 @@ const TEXTS: &[Row] = &[
     ]),
     ("tray.about", ["About Wortfluss", "Über Wortfluss", "Wortfluss hakkında", "Acerca de Wortfluss", "O Wortfluss", "Informazioni su Wortfluss"]),
     ("tray.made_by", ["Made by {}", "Entwickelt von {}", "Geliştiren: {}", "Creado por {}", "Autor: {}", "Creato da {}"]),
+    ("tray.saved", [
+        "Time saved this month: {}",
+        "Diesen Monat gespart: {}",
+        "Bu ay kazanılan zaman: {}",
+        "Tiempo ahorrado este mes: {}",
+        "Zaoszczędzony czas w tym miesiącu: {}",
+        "Tempo risparmiato questo mese: {}",
+    ]),
+    ("saved.days", [
+        "≈ {} working days",
+        "≈ {} Arbeitstage",
+        "≈ {} iş günü",
+        "≈ {} días laborables",
+        "≈ {} dni roboczych",
+        "≈ {} giorni lavorativi",
+    ]),
+    ("saved.months", [
+        "≈ {} working months",
+        "≈ {} Arbeitsmonate",
+        "≈ {} iş ayı",
+        "≈ {} meses laborables",
+        "≈ {} miesięcy roboczych",
+        "≈ {} mesi lavorativi",
+    ]),
     ("tray.website", ["Website", "Website", "Web sitesi", "Sitio web", "Strona internetowa", "Sito web"]),
     ("tray.github", ["GitHub profile", "GitHub-Profil", "GitHub profili", "Perfil de GitHub", "Profil GitHub", "Profilo GitHub"]),
     ("tray.source", [

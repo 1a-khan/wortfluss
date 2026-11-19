@@ -9,6 +9,8 @@
 # 3. Downloads CI's binaries, signs latest.json with the release key
 #    (~/.config/wortfluss-release/signing.key, never leaves this machine) and publishes
 #    everything as a GitHub release of 1a-khan/wortfluss.
+# 4. Attaches an SBOM per platform (CycloneDX: every component and version inside the
+#    binaries), made from the same Cargo.lock. Needs `cargo install cargo-cyclonedx --locked`.
 # Installed copies pick it up within 6 hours (or at once with `vtt update`).
 set -euo pipefail
 
@@ -24,6 +26,7 @@ die() { echo "release: $*" >&2; exit 1; }
 
 grep -q "^version = \"$VERSION\"" Cargo.toml || die "Cargo.toml is not at version $VERSION"
 [ -f "$KEY" ] || die "signing key $KEY missing (restore it from your backup)"
+command -v cargo-cyclonedx >/dev/null || die "cargo-cyclonedx missing: cargo install cargo-cyclonedx --locked"
 [ -z "$(git status --porcelain)" ] || die "uncommitted changes"
 COMMIT=$(git rev-parse HEAD)
 git fetch -q origin
@@ -55,12 +58,19 @@ SETUP=$(find "$DIST/windows" -name 'Wortfluss-Setup-*.exe' -type f | head -1)
 [ -n "$SETUP" ] || die "installer missing in CI artifacts"
 cp "$SETUP" "$OUT/Wortfluss-Setup-$VERSION.exe"
 
+# Software bill of materials per platform, from this commit's Cargo.lock.
+for target in x86_64-unknown-linux-gnu:linux-x86_64 x86_64-pc-windows-msvc:windows-x86_64; do
+    cargo cyclonedx -q -f json --target "${target%%:*}" --target-in-filename
+    mv "vtt_${target%%:*}.cdx.json" "$OUT/sbom-${target##*:}.cdx.json"
+done
+
 "$SIGNER" _release-sign "$KEY" "$VERSION" \
     "https://github.com/$PUB_REPO/releases/download/$TAG" "$OUT" \
     "linux-x86_64:vtt=$OUT/vtt-linux-x86_64" \
     "windows-x86_64:vtt.exe=$OUT/vtt.exe" \
     "windows-x86_64:wortfluss.exe=$OUT/wortfluss.exe" >/dev/null
-(cd "$OUT" && sha256sum vtt-linux-x86_64 vtt.exe wortfluss.exe "Wortfluss-Setup-$VERSION.exe" > SHA256SUMS)
+(cd "$OUT" && sha256sum vtt-linux-x86_64 vtt.exe wortfluss.exe "Wortfluss-Setup-$VERSION.exe" \
+    sbom-linux-x86_64.cdx.json sbom-windows-x86_64.cdx.json > SHA256SUMS)
 
 git tag -a "$TAG" -m "Wortfluss $VERSION" "$COMMIT"
 git push -q origin "$TAG"
@@ -68,7 +78,8 @@ git push -q origin "$TAG"
 if [ -n "$NOTES" ]; then NOTES_ARG=(--notes-file "$NOTES"); else NOTES_ARG=(--notes "Wortfluss $VERSION"); fi
 gh release create "$TAG" --repo "$PUB_REPO" --title "Wortfluss $VERSION" "${NOTES_ARG[@]}" \
     "$OUT/Wortfluss-Setup-$VERSION.exe" "$OUT/vtt-linux-x86_64" "$OUT/vtt.exe" "$OUT/wortfluss.exe" \
-    "$OUT/latest.json" "$OUT/latest.json.sig" "$OUT/SHA256SUMS"
+    "$OUT/latest.json" "$OUT/latest.json.sig" "$OUT/SHA256SUMS" \
+    "$OUT/sbom-linux-x86_64.cdx.json" "$OUT/sbom-windows-x86_64.cdx.json"
 
 echo "Published $TAG: https://github.com/$PUB_REPO/releases/tag/$TAG"
 
@@ -78,4 +89,4 @@ echo "Published $TAG: https://github.com/$PUB_REPO/releases/tag/$TAG"
 echo "VirusTotal (look in a day or two; \"not found\" = no scanner has seen it yet):"
 while read -r sum name; do
     echo "  $name: https://www.virustotal.com/gui/file/$sum"
-done < "$OUT/SHA256SUMS"
+done < <(grep -v '\.cdx\.json$' "$OUT/SHA256SUMS")
