@@ -46,7 +46,7 @@ zvariant = { version = "5", features = ["gvariant"] }      # dconf change sets
 
 [target.'cfg(windows)'.dependencies]
 arboard = "3.7.0"
-tray-icon = "0.21"                              # notification-area icon with menu
+tray-icon = "0.26"                              # notification-area icon with menu
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
