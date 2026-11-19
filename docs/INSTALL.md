@@ -104,10 +104,11 @@ and there is no bubble.
 |---|---|
 | **Dictate** | Click into any text field, **hold Right Ctrl**, speak, let go. The text appears after about a second. |
 | Know it is listening | A short beep, and a small bubble with a moving sound wave next to the text cursor (in apps that don't report their cursor: at the bottom of the screen). Grey dots: the text is on its way. |
-| **Improve selected text** | Select text, press **Ctrl+Alt+R**, choose a tone with 1–6 (correct, professional, casual, polite, social, emojis), **Enter** replaces it. To get it in another language, pick one under *Translate into* and press *Translate*. |
+| **Improve or translate selected text** | Select text, press **Ctrl+Alt+R**: see [section 5](#5-rewrite-and-translate-text). |
 | **Transcribe a lecture, video or meeting** | **Ctrl+Alt+S** starts and stops; the transcript and notes land in *Documents/vtt* (tray → *Open transcripts folder*). Only record people with their consent. |
 | Change settings | Tray icon → *All settings...* (or **Ctrl+Alt+V**), Start menu → *Wortfluss settings*, or `vtt setup`. |
 | Check that everything works | `vtt check` (Windows: in a command window) |
+| See how much time you save | Click the tray icon, or `vtt usage` (see [section 6](#6-how-much-time-do-i-save)) |
 | Help | Start menu → *Wortfluss help*, or `vtt help` |
 
 Tips:
@@ -122,7 +123,62 @@ Tips:
   by pasting* → No.
 - Turn the bubble off: *All settings...* → *Listening bubble at the text cursor*.
 
-## 5. Updates
+**The menu at the Wortfluss icon** (taskbar / top bar): at the top it says whether Wortfluss
+is ready and how much time you saved this month. Below: start a session (computer sound,
+microphone or call), open the transcripts folder, rewrite text, spelling correction on/off,
+hold or toggle, choose the microphone, settings, updates and *Quit Wortfluss*.
+
+## 5. Rewrite and translate text
+
+Works in every program: email, chat, browser, Word …
+
+1. **Select** the text.
+2. Press **Ctrl+Alt+R**. A window shows the selected text and the suggestion below it.
+3. Pick a **tone** with the mouse or the keys **1–6**: **Correct** (only mistakes),
+   **Professional**, **Casual**, **Polite**, **#social** (for posts, with hashtags) or
+   **Add emojis**. The text stays in its own language.
+4. **Replace** (or **Enter**) puts the suggestion where the selected text was. **Copy** puts
+   it on the clipboard, **Cancel** (or **Esc**) closes the window without changing anything.
+   You can also edit the suggestion first.
+
+![The rewrite window: tones on top, the selected text and the corrected suggestion](images/rewrite.png)
+
+**Into another language:** choose it under *Translate into* (22 languages) and press
+**Translate**. It translates the meaning, not word by word, and keeps the tone: a polite text
+stays polite. **Original language** goes back.
+
+![The same story, translated into English](images/translate.png)
+
+*The example is full of mistakes on purpose, and made up.*
+
+## 6. How much time do I save?
+
+Speaking is about three times faster than typing. Wortfluss keeps count of the time this
+saves you:
+
+- **In the tray menu:** *"Time saved this month: 3 h 40 min"*
+- **In detail:** `vtt usage` shows today, this month and all time; large totals also in
+  working days (8 hours) and working months.
+
+How it's calculated: the characters Wortfluss typed for you, divided by your typing speed,
+minus the time you spent speaking. Only dictations count, not sessions. Only the *number* of
+characters is stored, never the text.
+
+**Your typing speed:** without a setting Wortfluss assumes 40 words per minute, the average.
+Measure yours with `vtt typing-test` (type one sentence, about 30 seconds), or set it with
+`vtt set typing-speed`.
+
+## 7. Feedback and bug reports
+
+Something doesn't work, or you're missing something? Please tell us:
+**[github.com/1a-khan/wortfluss/issues/new/choose](https://github.com/1a-khan/wortfluss/issues/new/choose)**
+(free GitHub account needed). There's a short form for bugs and one for ideas. Helpful: what
+you did, what happened, and the output of `vtt check`.
+
+**Never** put your API key or private text into a report: reports are public. Security
+problems please report privately (see [SECURITY.md](../SECURITY.md)).
+
+## 8. Updates
 
 Nothing to do: Wortfluss looks for new versions every few hours and installs them in the
 background when you are not dictating. Only versions signed by the publisher are accepted.
@@ -131,7 +187,7 @@ To check at once: tray icon → *Check for updates* (it tells you when it is sea
 downloading), or `vtt update`. Linux with GNOME: if an update asks you to log out and back in,
 do so when convenient.
 
-## 6. Uninstall
+## 9. Uninstall
 
 - **Windows:** Settings → Apps → *Wortfluss* → Uninstall (or Start menu → *Uninstall Wortfluss*).
   Your settings and transcripts stay in `%APPDATA%\Wortfluss` and *Documents\vtt*; delete
@@ -151,7 +207,7 @@ do so when convenient.
 4. An app shows strange or doubled letters: make sure *Put text in by pasting* is on
    (`vtt set paste`).
 5. Still stuck: [report a problem](https://github.com/1a-khan/wortfluss/issues/new/choose)
-   (never post your API key), or contact [MIAK IT](https://miak-it.de).
+   (see [section 7](#7-feedback-and-bug-reports)), or contact [MIAK IT](https://miak-it.de).
 
 ---
 Wortfluss is made by Ammad Khan, [MIAK IT](https://miak-it.de). Free and open source
