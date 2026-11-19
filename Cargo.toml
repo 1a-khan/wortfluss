@@ -35,7 +35,7 @@ winresource = "0.1.34"
 libc = "0.2.191"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-evdev = "0.12"                                  # global hotkey + virtual keyboard (uinput)
+evdev = "0.13"                                  # global hotkey + virtual keyboard (uinput)
 gvdb = "0.10.1"                                 # reads GNOME's settings (keyboard layout)
 ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 pulseaudio = "0.3.2"                            # sound-server inputs and recording
